@@ -39,7 +39,7 @@ if lin_traj == true
     V_ref = [1.5; 1.5]; % [m/s] Velocità globale di avanzamento della flotta
 else 
     % Parametri Traiettoria Sinusoidale
-    v_x_ref = 1.0;      % [m/s] Velocità di avanzamento costante lungo X
+    v_y_ref = 1.0;      % [m/s] Velocità di avanzamento costante lungo Y
     A_sin = 2.0;        % [m] Ampiezza dell'oscillazione lungo Y (spostamento laterale)
     omega_sin = 0.5;    % [rad/s] Frequenza dell'oscillazione
 end
@@ -78,6 +78,9 @@ for i = 1:N_veh
     fleet(i).x_true(:,1) = x0_true(:,i);
     % L'EKF parte con una stima leggermente sbagliata --> questa stima iniziale non è perfetta. sto mentendo al EKF per vedere se riesce a correggersi e convergere alla stima corretta. Se partisse già con la stima perfetta, non vedremmo il processo di correzione e convergenza.
     fleet(i).x_est(:,1)  = x0_true(:,i) + [1; -1; 0.2; 0; 0];    % questa è la stima iniziale:+1 m in X, -1 m in Y, +0.2 rad in theta (circa 11 gradi), stessa stima per V e W
+
+    fleet(i).F_cons_hist = zeros(2, N_steps);
+    fleet(i).F_rep_hist  = zeros(2, N_steps);
     
     % Assegna R_gps (Covarianza del rumore di MISURA GPS) specifica in base al ruolo
     if i == 1
@@ -91,7 +94,7 @@ end
 for k = 1:N_steps-1
     if lin_traj == false
         t_k = t(k);
-        v_y_ref = A_sin * omega_sin * cos(omega_sin * t_k);
+        v_x_ref = A_sin * omega_sin * cos(omega_sin * t_k);
         V_ref = [v_x_ref; v_y_ref]; % Vettore velocità desiderata al tempo k
     end
 
@@ -142,6 +145,9 @@ for k = 1:N_steps-1
                 end
             end
         end
+
+        fleet(i).F_cons_hist(:, k) = F_cons;
+        fleet(i).F_rep_hist(:, k)  = F_rep;
         
         % Velocità desiderata del punto p_i
         p_dot_cmd = V_ref + F_cons + F_rep;         % vettore velocità (v_x, v_y) finale del nostro punto virtuale. È la somma di tre intenti: "vai avanti insieme agli altri" (V_ref), "stai in formazione" (F_cons) e "non collidere" (F_rep).
@@ -167,18 +173,45 @@ for k = 1:N_steps-1
     end
 end
 
-%% 6. PLOT RISULTATI
-figure('Name','Traiettoria Flotta e Formazione','Color','w'); hold on; grid on; axis equal;
+%% 6. PLOT RISULTATI E ANIMAZIONE REAL-TIME
+figure('Name','Animazione Flotta e Formazione','Color','w'); 
+hold on; grid on; axis equal;
+title('Animazione della Traiettoria (Reale vs Stimata)'); 
+xlabel('X [m]'); ylabel('Y [m]');
+
 colors = ['b', 'r', 'g'];
+h_true_trail = zeros(1, N_veh);
+h_est_trail = zeros(1, N_veh);
+h_true_pos = zeros(1, N_veh);
+h_est_pos = zeros(1, N_veh);
+
 for i = 1:N_veh
-    % Plot Ground Truth
-    plot(fleet(i).x_true(1,:), fleet(i).x_true(2,:), [colors(i) '--'], 'LineWidth', 1.5, 'DisplayName', sprintf('True V%d', i));
-    % Plot Stima EKF
-    plot(fleet(i).x_est(1,:), fleet(i).x_est(2,:), [colors(i) '-'], 'LineWidth', 2, 'DisplayName', sprintf('Est V%d', i));
-    % Plot punto finale
-    plot(fleet(i).x_est(1,end), fleet(i).x_est(2,end), [colors(i) 'o'], 'MarkerFaceColor', colors(i), 'MarkerSize', 8);
+    % Linee per le traiettorie
+    h_true_trail(i) = plot(fleet(i).x_true(1,1), fleet(i).x_true(2,1), [colors(i) '--'], 'LineWidth', 1);
+    h_est_trail(i) = plot(fleet(i).x_est(1,1), fleet(i).x_est(2,1), [colors(i) '-'], 'LineWidth', 1.5);
+    
+    % Pallini per la posizione attuale
+    h_true_pos(i) = plot(fleet(i).x_true(1,1), fleet(i).x_true(2,1), 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 4);
+    h_est_pos(i) = plot(fleet(i).x_est(1,1), fleet(i).x_est(2,1), [colors(i) 'o'], 'MarkerFaceColor', colors(i), 'MarkerSize', 8);
 end
-title('Fase 2: Controllo di Formazione Distribuito'); xlabel('X [m]'); ylabel('Y [m]'); legend('Location','best');
+legend([h_est_pos(1), h_est_pos(2), h_est_pos(3)], {'Master (V1)', 'Slave (V2)', 'Slave (V3)'}, 'Location', 'best');
+
+% Loop di Animazione
+step_animazione = 2; % Salta un frame per velocizzare l'animazione (cambia a 1 per fluidità massima)
+for k = 1:step_animazione:N_steps
+    for i = 1:N_veh
+        % Aggiorna le linee (storia)
+        set(h_true_trail(i), 'XData', fleet(i).x_true(1, 1:k), 'YData', fleet(i).x_true(2, 1:k));
+        set(h_est_trail(i), 'XData', fleet(i).x_est(1, 1:k), 'YData', fleet(i).x_est(2, 1:k));
+        
+        % Aggiorna i pallini (posizione corrente)
+        set(h_true_pos(i), 'XData', fleet(i).x_true(1, k), 'YData', fleet(i).x_true(2, k));
+        set(h_est_pos(i), 'XData', fleet(i).x_est(1, k), 'YData', fleet(i).x_est(2, k));
+    end
+    drawnow; % Forza MATLAB a disegnare il frame istantaneamente
+    pause(0.05);
+end
+
 
 % Grafico degli Errori di Stima GPS
 figure('Name','Confronto Errori Stima X','Color','w');
@@ -194,6 +227,69 @@ for i = 1:N_veh
     ylabel('Errore [m]');
 end
 xlabel('Tempo [s]');
+
+% --- DASHBOARD SALUTE EKF (Errori X, Y, Theta) ---
+figure('Name','Diagnostica EKF: Errore di Stima','Color','w', 'Position', [100, 100, 1000, 600]);
+for i = 1:N_veh
+    % Calcolo degli errori per tutte e tre le variabili spaziali
+    err_x = fleet(i).x_true(1,:) - fleet(i).x_est(1,:);
+    err_y = fleet(i).x_true(2,:) - fleet(i).x_est(2,:);
+    err_th = wrapToPi(fleet(i).x_true(3,:) - fleet(i).x_est(3,:)); % wrapToPi per evitare salti a 360 gradi
+    
+    % Colonna per ogni veicolo, riga per ogni variabile
+    % Plot Errore X
+    subplot(3, N_veh, i);
+    ylim([-2.5, 2.5]); 
+    plot(t, err_x, colors(i), 'LineWidth', 1); grid on; hold on;
+    yline(0, 'k--', 'LineWidth', 1.5); % Linea dello zero
+    title(sprintf('V%d: Errore X', i)); 
+    if i==1; ylabel('[m]'); end
+    
+    % Plot Errore Y
+    subplot(3, N_veh, i + N_veh);
+    ylim([-2.5, 2.5]);
+    plot(t, err_y, colors(i), 'LineWidth', 1); grid on; hold on;
+    yline(0, 'k--', 'LineWidth', 1.5);
+    title(sprintf('V%d: Errore Y', i)); 
+    if i==1; ylabel('[m]'); end
+    
+    % Plot Errore Theta
+    subplot(3, N_veh, i + 2*N_veh);
+    ylim([-0.5, 0.5])
+    plot(t, err_th, colors(i), 'LineWidth', 1); grid on; hold on;
+    yline(0, 'k--', 'LineWidth', 1.5);
+    title(sprintf('V%d: Errore \\theta', i)); 
+    xlabel('Tempo [s]'); 
+    if i==1; ylabel('[rad]'); end
+end
+
+
+%% --- DASHBOARD FORZE VIRTUALI (Consenso e Repulsione) ---
+figure('Name','Analisi delle Forze Virtuali nel Tempo','Color','w', 'Position', [150, 150, 1000, 500]);
+
+for i = 1:N_veh
+    % Calcolo della magnitudo (norma) dei vettori forza istante per istante
+    mag_F_cons = sqrt(fleet(i).F_cons_hist(1,:).^2 + fleet(i).F_cons_hist(2,:).^2);
+    mag_F_rep  = sqrt(fleet(i).F_rep_hist(1,:).^2  + fleet(i).F_rep_hist(2,:).^2);
+    
+    % 1. Plot Sforzo di Consenso (Attrazione)
+    subplot(2, N_veh, i);
+    plot(t, mag_F_cons, colors(i), 'LineWidth', 1.5); grid on; hold on;
+    title(sprintf('V%d: Sforzo Consenso (|F_{cons}|)', i));
+    xlabel('Tempo [s]'); 
+    if i==1; ylabel('Magnitudo [m/s]'); end
+    
+    % 2. Plot Forza Repulsiva (Evitamento collisioni)
+    subplot(2, N_veh, i + N_veh);
+    plot(t, mag_F_rep, 'k', 'LineWidth', 1.5); grid on; hold on;
+    title(sprintf('V%d: Forza Repulsiva (|F_{rep}|)', i));
+    xlabel('Tempo [s]'); 
+    if i==1; ylabel('Magnitudo [m/s]'); end
+    
+    % Allineamento visivo degli assi Y per facilitare il confronto
+    subplot(2, N_veh, i);       ylim([0, max(0.1, max(mag_F_cons)*1.2)]);
+    subplot(2, N_veh, i+N_veh); ylim([0, max(0.1, max(mag_F_rep)*1.2)]);
+end
 
 %% ========================================================================
 % FUNZIONI LOCALI
