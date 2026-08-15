@@ -4,12 +4,12 @@
 clear; clc; close all;
 
 %% 1. PARAMETRI DELLA MAPPA E DELLE ZONE
-W = 500; % [m] Larghezza mappa (X)
-H = 500; % [m] Altezza mappa (Y)
+W_MAP = 500; % [m] Larghezza mappa (X)
+H_MAP = 500; % [m] Altezza mappa (Y)
 
 % Parametri GPS-denied zones
-n_area = 9;      % Numero di zone buie
-r_area = 50;     % [m] Raggio delle zone
+n_area = 8;      % Numero di zone buie
+r_area = 65;     % [m] Raggio delle zone
 
 % Parametri Percorso
 tipo_percorso = 'sinusoide'; 
@@ -20,18 +20,18 @@ n_ancore = 2;      % Numero di ancore installabili (aumentato per coprire le are
 r_ancora = 100;    % [m] Raggio di visibilità dell'ancora UWB
 
 %% 2. GENERAZIONE DEL PERCORSO NOMINALE
-y_path = linspace(0, H, num_punti_path);
+y_path = linspace(0, H_MAP, num_punti_path);
 switch tipo_percorso
     case 'sinusoide'
         ampiezza = 100;
-        frequenza = 2 * pi / H; 
-        x_path = W/2 + ampiezza * sin(frequenza * y_path);
+        frequenza = 2 * pi / H_MAP; 
+        x_path = W_MAP/2 + ampiezza * sin(frequenza * y_path);
     case 'diagonale'
-        x_path = linspace(0, W, num_punti_path);
+        x_path = linspace(0, W_MAP, num_punti_path);
     case 'arco'
         R_arco = 200;
         theta = linspace(pi, pi/2, num_punti_path);
-        x_path = W - R_arco + R_arco * cos(theta);
+        x_path = W_MAP - R_arco + R_arco * cos(theta);
         y_path = R_arco * sin(theta);
 end
 path_points = [x_path', y_path'];
@@ -44,8 +44,8 @@ for i = 1:n_area
     % Generazione casuale delle coordinate X e Y all'interno della mappa
     % Usiamo un margine pari a r_area per evitare che il centro della zona
     % venga generato esattamente sul bordo e "esca" dalla mappa.
-    gps_denied_zones(i).xc = r_area + rand() * (W - 2*r_area); 
-    gps_denied_zones(i).yc = r_area + rand() * (H - 2*r_area);
+    gps_denied_zones(i).xc = r_area + rand() * (W_MAP - 2*r_area); 
+    gps_denied_zones(i).yc = r_area + rand() * (H_MAP - 2*r_area);
     gps_denied_zones(i).R  = r_area;
 end
 
@@ -99,7 +99,7 @@ end
 %% 6. PLOT DELL'AMBIENTE
 figure('Name', 'Mappa Ambiente e Ottimizzazione UWB (Aree Cieche)', 'Color', 'w');
 hold on; grid on; axis equal;
-axis([0 W 0 H]);
+axis([0 W_MAP 0 H_MAP]);
 
 % Disegna Zone GPS-Denied (Cerchi rossi semi-trasparenti)
 for i = 1:n_area
@@ -133,7 +133,7 @@ xlabel('X [m]'); ylabel('Y [m]');
 [~, obj_h] = legend('Location', 'best');
 
 %% 7. SALVATAGGIO DATI
-save('ambiente_fase3.mat', 'W', 'H', 'gps_denied_zones', 'tipo_percorso', 'path_points', 'uwb_opt', 'r_ancora');
+save('ambiente_fase3.mat', 'W_MAP', 'H_MAP', 'gps_denied_zones', 'tipo_percorso', 'path_points', 'uwb_opt', 'r_ancora');
 disp('Ambiente generato e salvato in "ambiente_fase3.mat".');
 
 %% ========================================================================
