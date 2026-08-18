@@ -3,6 +3,34 @@
 % =========================================================================
 clear; clc; close all;
 
+% -------------------------------------------------------------------------
+% NOTAZIONE (Thrun, "Probabilistic Robotics") — identica in tutte le fasi
+%
+%   Modello:   x_t = f(x_{t-1}, u_t) + eps_t     cov(eps) = Q   [processo]
+%              z_t = h(x_t)          + delta_t   cov(delta) = R [misura]
+%
+%   A_k      Jacobiano df/dx        (nel testo A_t)
+%   C_k      Jacobiano dh/dx        (nel testo C_t)
+%   Q        covarianza rumore di PROCESSO
+%   R        covarianza rumore di MISURA
+%   Sigma    covarianza della stima (nel testo Sigma_t)
+%   K        guadagno di Kalman
+%   S        covarianza dell'innovazione, S = C*Sigma_bar*C' + R
+%            (nel testo compare solo come parentesi interna di K_t)
+%
+%   Corrispondenza per i VETTORI (nel codice tenuti espliciti per leggibilita'):
+%   x_est  <-> mu_t        (stima a posteriori)
+%   x_pred <-> mu_bar_t    (stima a priori / predetta)
+%   Sigma_bar <-> Sigma_bar_t (covarianza predetta)
+%
+%   NOTA — Assenza del termine B_t*u_t: nel modello di riferimento la
+%   predizione usa l'ingresso comandato. Qui NO: v e omega sono STATI stimati,
+%   osservati dagli encoder, e la predizione e' un random walk su di essi.
+%   Scelta deliberata: su terreno scivoloso il comando NON coincide con la
+%   velocita' reale, quindi usarlo come ingresso correlerebbe il rumore di
+%   processo con l'ingresso stesso, violando le ipotesi del filtro.
+% -------------------------------------------------------------------------
+
 %% 1. CARICAMENTO AMBIENTE
 try
     load('ambiente_fase3.mat');
@@ -12,12 +40,15 @@ catch
 end
 
 %% 2. PARAMETRI DI SISTEMA
-param.r = 0.5;         % [m] raggio ruote
-param.L = 1.0;         % [m] carreggiata
-param.b = 0.3;         % [m] punto feedback linearization
-v_max = 5.0;           % [m/s]
-w_max = 2.0;           % [rad/s]
-f_s = 10;              % [Hz] frequenza 
+% Taratura su mezzo battipista reale (classe PistenBully 600 / Prinoth Bison):
+% ingombro ~5 m sui cingoli, ~9 m con fresa e lama. Vedi Fase 2 per il dettaglio.
+param.r = 0.5;         % [m] raggio ruota motrice del cingolo
+param.L = 3.5;         % [m] carreggiata (interasse cingoli)
+param.b = 2.0;         % [m] punto di controllo per feedback linearization
+v_max = 5.0;           % [m/s] ~18 km/h
+w_max = 0.6;           % [rad/s] ~34 deg/s, coerente con un cingolato di 5 m
+v_cruise = 2.5;        % [m/s] ~9 km/h, velocita' di lavoro del Master
+f_s = 10;              % [Hz] frequenza
 Ts = 1/f_s;            % [s]
 
 % Calcolo del tempo di simulazione approssimativo in base al percorso
@@ -36,39 +67,96 @@ R_gps_master = diag([0.2^2, 0.2^2]);
 R_gps_slave  = diag([2.0^2, 2.0^2]);
 R_imu        = diag([0.05^2, 0.02^2]);   % [th, w]
 R_enc        = diag([0.1^2, 0.1^2]);     % [wR, wL]
-sigma_uwb    = 0.5;                      % [m] Rumore distanza ancore UWB
-sigma_collab = 1.0;                      % [m] Rumore distanza inter-veicolare
+% RANGING UWB — Il ranging verso ancora fissa e quello inter-veicolare usano la
+% stessa tecnologia, ma non hanno la stessa qualita'. In condizioni LOS ideali
+% l'UWB e' accurato al centimetro; i valori qui sono volutamente conservativi
+% perche' tengono conto di neve, ostruzioni parziali del terreno e multipath.
+sigma_uwb    = 0.5;   % [m] verso ANCORA FISSA: posizione rilevata una volta per
+                      %     tutte, antenna su palo (3-4 m), quindi buona LOS.
+sigma_collab = 0.6;   % [m] INTER-VEICOLARE: peggiore, ma non per il moto.
+                      %     Lo spostamento durante lo scambio TW-TOF (~1 ms a
+                      %     2.5 m/s) vale millimetri ed e' trascurabile. Le
+                      %     ragioni vere sono due:
+                      %     1) ANTENNE PIU' BASSE - montate sul mezzo e non su
+                      %        palo. La letteratura sperimentale mostra che
+                      %        l'errore di ranging cresce marcatamente al
+                      %        ridursi dell'altezza d'antenna (piu' multipath
+                      %        da riflessione al suolo, piu' occlusione).
+                      %     2) EFFETTO PIATTAFORMA SU ENTRAMBI I TERMINALI -
+                      %        la massa metallica del veicolo distorce il
+                      %        diagramma d'antenna e introduce un bias di
+                      %        ranging. Verso un'ancora fissa l'effetto e'
+                      %        presente su un solo capo del link, fra due
+                      %        veicoli su entrambi.
 
-r_collab = 40; % [m] Raggio massimo per usare un vicino come "ancora collaborativa"
+% RAGGIO DI COMUNICAZIONE — Deve essere ampiamente superiore all'estensione
+% della formazione (36-40 m), altrimenti i vicini escono dalla portata radio e
+% la localizzazione collaborativa si spegne proprio quando serve. Il valore
+% precedente (40 m) era al limite esatto della nuova formazione.
+% 120 m e' compatibile con un link UWB in vista ottica su neve aperta.
+r_collab = 120;  % [m]
 
 %% 4. PARAMETRI FORMAZIONE
-pos_des = [ 0.0,  3.0;  % V1 (Master)
-           -3.0, -3.0;  % V2
-            3.0, -3.0]; % V3
+% Formazione a "V" su fronte ampio, coerente con l'impiego reale dei mezzi
+% battipista. Distanze reciproche: d12 = d13 = 36.1 m, d23 = 40.0 m.
+% E' anche un requisito funzionale: con una formazione di pochi metri i tre
+% veicoli condividono sempre la stessa condizione di copertura GPS (le zone
+% d'ombra hanno raggio 65 m) e la localizzazione collaborativa non ha modo di
+% dimostrare alcun beneficio. Vedi README3.md §3.3.
+pos_des = [  0.0,  20.0;  % V1 (Master), in testa
+           -20.0, -10.0;  % V2, ala sinistra
+            20.0, -10.0]; % V3, ala destra
 Delta = zeros(2, N_veh, N_veh);
 for i = 1:N_veh
     for j = 1:N_veh
         Delta(:, i, j) = pos_des(i,:)' - pos_des(j,:)';
     end
 end
-K_cons = 1.2;       
-R_safe = 2.0;       
-k_rep  = 3.0;       
+
+% Guadagni riscalati sulla nuova geometria (vedi Fase 2 per la derivazione).
+K_cons    = 0.15;       % tau = 1/(3*K_cons) ~ 2.2 s sul grafo completo K3
+d_safe    = 15.0;       % [m] ingombro fisico dei mezzi + margine
+v_rep_ref = 3.0;        % [m/s] intensita' repulsiva desiderata a d = d_safe/2
+d_ref     = d_safe / 2;
+k_rep     = v_rep_ref / ((1/d_ref - 1/d_safe) * (1/d_ref^2));
 
 %% 5. INIZIALIZZAZIONE STRUTTURA FLOTTA
-% Posizioniamo i veicoli vicino al punto di partenza del percorso
-start_pt = path_points(1, :)';
-dir_iniziale = atan2(path_points(2,2)-path_points(1,2), path_points(2,1)-path_points(1,1));
+% La formazione e' definita nel riferimento GLOBALE: la legge di consenso usa
+% Delta_ij senza mai ruotarlo, quindi la "V" mantiene orientamento fisso
+% rispetto alla mappa. E' un'approssimazione accettabile perche' il percorso si
+% sviluppa prevalentemente lungo +Y.
+%
+% Le posizioni iniziali seguono ORA lo stesso criterio, senza rotazione. La
+% versione precedente applicava rot_mat a pos_des solo qui e non nel consenso:
+% con dir_iniziale ~ pi/2 questo ruotava la formazione di 90 gradi, facendo
+% nascere i veicoli in una configurazione diversa da quella poi inseguita dal
+% controllo. Con offset di 3 m l'effetto era invisibile; con offset di 20 m
+% genererebbe un errore iniziale spurio di decine di metri.
+%
+% Il punto di partenza e' inoltre arretrato lungo il percorso quanto basta
+% perche' i veicoli di coda non nascano fuori dalla mappa: la formazione e'
+% profonda 30 m e il percorso parte da y = 0.
+margine_start = (pos_des(1,2) - min(pos_des(:,2))) + 10;
+idx_start = find(path_points(:,2) >= margine_start, 1);
+if isempty(idx_start); idx_start = 1; end
+
+% Il Master nasce esattamente su un waypoint; gli altri si dispongono attorno
+% al centroide virtuale della formazione.
+p_master0    = path_points(idx_start, :)';
+origine_form = p_master0 - pos_des(1,:)';
+dir_iniziale = atan2(path_points(idx_start+1,2) - path_points(idx_start,2), ...
+                     path_points(idx_start+1,1) - path_points(idx_start,1));
 
 for i = 1:N_veh
     fleet(i).x_true = zeros(5, N_steps);
     fleet(i).x_est  = zeros(5, N_steps);
-    fleet(i).P      = diag([2, 2, 0.1, 1, 1]);
-    
-    % Offset geometrico iniziale per la formazione
-    rot_mat = [cos(dir_iniziale), -sin(dir_iniziale); sin(dir_iniziale), cos(dir_iniziale)];
-    pos_iniziale = start_pt + rot_mat * pos_des(i,:)';
-    
+    fleet(i).Sigma      = diag([2, 2, 0.1, 1, 1]);
+    fleet(i).u_hist         = zeros(2, N_steps);    % comandi [v; w] applicati
+    fleet(i).in_denied_hist = false(1, N_steps);    % storico copertura GPS
+
+    % Offset geometrico iniziale per la formazione (riferimento globale)
+    pos_iniziale = origine_form + pos_des(i,:)';
+
     fleet(i).x_true(:,1) = [pos_iniziale(1); pos_iniziale(2); dir_iniziale; 0; 0];
     fleet(i).x_est(:,1)  = fleet(i).x_true(:,1) + [(rand(2,1)-0.5)*2; 0; 0; 0]; % Piccolo errore iniziale
     
@@ -78,163 +166,112 @@ for i = 1:N_veh
         fleet(i).R_gps = R_gps_slave;
     end
     
-    fleet(i).target_idx = 2; % Indice del percorso da inseguire
+    fleet(i).target_idx = idx_start + 1; % Indice del percorso da inseguire
 end
 
 %% 6. MAIN SIMULATION LOOP
+% -------------------------------------------------------------------------
+% CONVENZIONE TEMPORALE E ORDINE DI ESECUZIONE: identici alla Fase 2.
+%   (1) BROADCAST  (2) CONTROLLO  (3) IMPIANTO  (4) SENSORI  (5) STIMA
+% Nessuno step usa informazione futura: il controllo in [t_k, t_{k+1}) dipende
+% solo da x_est(:,k), e le misure che correggono la predizione a t_{k+1} sono
+% generate dalla ground truth a t_{k+1}.
+%
+% SPECIFICITA' DELLA FASE 3
+% a) La disponibilita' del GPS e' valutata sulla posizione REALE a t_{k+1}:
+%    e' una proprieta' fisica dell'ambiente, non della stima del veicolo.
+% b) Le misure di range inter-veicolare a t_{k+1} dipendono dalla ground truth
+%    di TUTTI i veicoli. Per questo l'impianto (3) e' una passata completa su
+%    tutta la flotta che PRECEDE la passata dei sensori (4).
+% c) L'ancora mobile usata nella localizzazione collaborativa e' la stima del
+%    vicino a t_k (ultimo pacchetto ricevuto) PROPAGATA di un passo con il suo
+%    modello di moto. Due ragioni:
+%      - rompe il loop algebrico fra i filtri, che altrimenti dipenderebbero
+%        l'uno dalla stima aggiornata dell'altro nello stesso istante;
+%      - e' cio' che un canale reale rende disponibile (in Fase 4 il ritardo
+%        diventera' esplicito e variabile).
+%    Senza la propagazione si confronterebbe una misura presa a t_{k+1} con una
+%    posizione riferita a t_k: bias sistematico pari a |v_j|*Ts.
+% -------------------------------------------------------------------------
 disp('Simulazione in corso...');
+N_end = N_steps;    % indice dell'ultimo campione valido (aggiornato all'arrivo)
+
 for k = 1:N_steps-1
-    
-    % Estraiamo le stime condivise k-esime per la localizzazione collaborativa
-    p_est_condivise = zeros(2, N_veh);
+
+    % --- (1) BROADCAST ---------------------------------------------------
+    % Punti di controllo dalle stime a t_k, usati dal consenso.
+    p_ctrl = zeros(2, N_veh);
     for i = 1:N_veh
-        p_est_condivise(:, i) = fleet(i).x_est(1:2, k);
+        xe = fleet(i).x_est(:, k);
+        p_ctrl(1, i) = xe(1) + param.b * cos(xe(3));
+        p_ctrl(2, i) = xe(2) + param.b * sin(xe(3));
     end
-    
-    % --- A. Lettura Sensori e EKF (Sensor Fusion Dinamica) ---
-    for i = 1:N_veh
-        xt = fleet(i).x_true(:, k);
-        xe_old = fleet(i).x_est(:, k);
-        P_old = fleet(i).P;
-        
-        % 1. Verifica se siamo in zona GPS-denied
-        in_denied = false;
-        for z_idx = 1:length(gps_denied_zones)
-            if norm(xt(1:2) - [gps_denied_zones(z_idx).xc; gps_denied_zones(z_idx).yc]) <= gps_denied_zones(z_idx).R
-                in_denied = true;
-                break;
-            end
-        end
-        
-        % 2. Generazione Misure Base (Sempre presenti: IMU + ENC)
-        z_imu = xt([3,5]) + sqrt(R_imu) * randn(2,1);
-        z_enc = [(xt(4) + (param.L/2)*xt(5))/param.r; 
-                 (xt(4) - (param.L/2)*xt(5))/param.r] + sqrt(R_enc) * randn(2,1);
-        
-        z = [z_imu; z_enc];
-        R_dinamica = blkdiag(R_imu, R_enc);
-        
-        % 3. Predizione Base
-        [x_pred, P_pred] = ekf_predict(xe_old, P_old, Ts, Q);
-        
-        % Costruzione dinamica di z_pred e H
-        z_pred = [x_pred(3); x_pred(5); 
-                 (x_pred(4) + (param.L/2)*x_pred(5))/param.r; 
-                 (x_pred(4) - (param.L/2)*x_pred(5))/param.r];
-             
-        H = [0 0 1 0 0; 
-             0 0 0 0 1; 
-             0 0 0 1/param.r  param.L/(2*param.r); 
-             0 0 0 1/param.r -param.L/(2*param.r)];
-             
-        % 4. Logica GPS vs UWB vs Collaborativa
-        if ~in_denied
-            % GPS Attivo
-            z_gps = xt(1:2) + sqrt(fleet(i).R_gps) * randn(2,1);
-            z = [z_gps; z];
-            z_pred = [x_pred(1:2); z_pred];
-            H = [[1 0 0 0 0; 0 1 0 0 0]; H];
-            R_dinamica = blkdiag(fleet(i).R_gps, R_dinamica);
-        else
-            % GPS Negato -> Usa UWB
-            if ~isempty(uwb_opt)
-                for a_idx = 1:size(uwb_opt, 1)
-                    dist_true = norm(xt(1:2) - uwb_opt(a_idx, :)');
-                    if dist_true <= r_ancora
-                        z_uwb = dist_true + sigma_uwb * randn();
-                        dist_est = norm(x_pred(1:2) - uwb_opt(a_idx, :)');
-                        dist_est = max(dist_est, 0.1); % Previeni div/0
-                        
-                        z = [z_uwb; z];
-                        z_pred = [dist_est; z_pred];
-                        H_row = [(x_pred(1) - uwb_opt(a_idx, 1))/dist_est, (x_pred(2) - uwb_opt(a_idx, 2))/dist_est, 0, 0, 0];
-                        H = [H_row; H];
-                        R_dinamica = blkdiag(sigma_uwb^2, R_dinamica);
-                    end
-                end
-            end
-            
-            % Localizzazione Collaborativa: Usa i vicini come ancore
-            for j = 1:N_veh
-                if i ~= j
-                    dist_true = norm(xt(1:2) - fleet(j).x_true(1:2, k));
-                    if dist_true <= r_collab
-                        z_collab = dist_true + sigma_collab * randn();
-                        % Calcolo distanza stimata usando la posizione stimata e condivisa del vicino j
-                        dist_est = norm(x_pred(1:2) - p_est_condivise(:, j));
-                        dist_est = max(dist_est, 0.1);
-                        
-                        z = [z_collab; z];
-                        z_pred = [dist_est; z_pred];
-                        H_row = [(x_pred(1) - p_est_condivise(1, j))/dist_est, (x_pred(2) - p_est_condivise(2, j))/dist_est, 0, 0, 0];
-                        H = [H_row; H];
-                        R_dinamica = blkdiag(sigma_collab^2, R_dinamica);
-                    end
-                end
-            end
-        end
-        
-        % 5. Aggiornamento EKF
-        [fleet(i).x_est(:, k+1), fleet(i).P] = ekf_update(x_pred, P_pred, z, z_pred, H, R_dinamica);
+
+    % Stime dei vicini propagate a t_{k+1}: ancore mobili per la
+    % localizzazione collaborativa (vedi nota (c) in testa al loop).
+    p_ancora_mobile = zeros(2, N_veh);
+    for j = 1:N_veh
+        xj = fleet(j).x_est(:, k);
+        p_ancora_mobile(1, j) = xj(1) + xj(4) * cos(xj(3)) * Ts;
+        p_ancora_mobile(2, j) = xj(2) + xj(4) * sin(xj(3)) * Ts;
     end
-    
-    % --- B. Controllo Distribuito e Path Following ---
-    p_cntrl = zeros(2, N_veh);
+
+    % --- (2) CONTROLLO + (3) IMPIANTO ------------------------------------
     for i = 1:N_veh
-        xe = fleet(i).x_est(:, k+1);
-        p_cntrl(1, i) = xe(1) + param.b * cos(xe(3));
-        p_cntrl(2, i) = xe(2) + param.b * sin(xe(3));
-    end
-    
-    for i = 1:N_veh
-        u_cons = [0; 0];
-        F_rep = [0; 0];
+        u_cons  = [0; 0];
+        F_rep   = [0; 0];
         V_rif_i = [0; 0];
-        
-        % Path Following solo per il Master
+
+        % Path following: solo il Master insegue il percorso nominale
         if i == 1
             idx = fleet(i).target_idx;
             target_pt = path_points(idx, :)';
-            dist_to_target = norm(p_cntrl(:, i) - target_pt);
-            
-            % Avanza indice se vicino al target
-            if dist_to_target < 3.0 && idx < num_punti_path
+
+            % Avanza il target virtuale quando il Master lo ha raggiunto.
+            % La soglia e' la distanza di lookahead del pure-pursuit: 10 m e'
+            % il doppio della lunghezza del mezzo, sufficiente a non inseguire
+            % un punto praticamente coincidente con la propria posizione (che
+            % renderebbe la direzione di riferimento numericamente instabile).
+            if norm(p_ctrl(:, i) - target_pt) < 10.0 && idx < num_punti_path
                 fleet(i).target_idx = idx + 1;
                 target_pt = path_points(fleet(i).target_idx, :)';
             end
-            
-            % Vettore di riferimento verso il target
-            v_dir = (target_pt - p_cntrl(:, i)) / norm(target_pt - p_cntrl(:, i) + 1e-6);
-            V_rif_i = 2.5 * v_dir; % Velocità crociera Master: 2.5 m/s
+
+            v_dir   = (target_pt - p_ctrl(:, i)) / norm(target_pt - p_ctrl(:, i) + 1e-6);
+            V_rif_i = v_cruise * v_dir;
         end
-        
-        % Consenso e Repulsione
+
+        % Consenso e repulsione, sulle stime condivise a t_k
         for j = 1:N_veh
             if i ~= j
-                err_ij = (p_cntrl(:, i) - p_cntrl(:, j)) - Delta(:, i, j);
+                err_ij = (p_ctrl(:, i) - p_ctrl(:, j)) - Delta(:, i, j);
                 u_cons = u_cons - K_cons * err_ij;
-                
-                dist = norm(p_cntrl(:, i) - p_cntrl(:, j));
-                if dist < R_safe && dist > 0.1
-                    grad_d = (p_cntrl(:, i) - p_cntrl(:, j)) / dist;
-                    rep_mag = k_rep * (1/dist - 1/R_safe) * (1/dist^2);
-                    F_rep = F_rep + rep_mag * grad_d;
+
+                dist = norm(p_ctrl(:, i) - p_ctrl(:, j));
+                if dist < d_safe && dist > 0.1
+                    grad_d  = (p_ctrl(:, i) - p_ctrl(:, j)) / dist;
+                    rep_mag = k_rep * (1/dist - 1/d_safe) * (1/dist^2);
+                    F_rep   = F_rep + rep_mag * grad_d;
                 end
             end
         end
-        
+
         p_dot_cmd = V_rif_i + u_cons + F_rep;
-        
-        % Feedback Linearization
-        th_est = fleet(i).x_est(3, k+1);
-        R_inv = [ cos(th_est),             sin(th_est); 
-                 -sin(th_est)/param.b, cos(th_est)/param.b ];
-             
-        vw_cmd = R_inv * p_dot_cmd;
-        v_cmd = max(min(vw_cmd(1), v_max), -v_max);
-        w_cmd = max(min(vw_cmd(2), w_max), -w_max);
-        
-        % Dinamica Reale
+
+        % Feedback linearization valutata sulla STIMA a t_k
+        th_est = fleet(i).x_est(3, k);
+        T_fl_inv  = [ cos(th_est),           sin(th_est);
+                  -sin(th_est)/param.b,   cos(th_est)/param.b ];
+
+        vw_cmd = T_fl_inv * p_dot_cmd;
+        v_cmd  = max(min(vw_cmd(1), v_max), -v_max);
+        w_cmd  = max(min(vw_cmd(2), w_max), -w_max);
+        fleet(i).u_hist(:, k) = [v_cmd; w_cmd];
+
+        % (3) IMPIANTO
+        % >>> PUNTO DI INNESTO DEL MODELLO DI SLITTAMENTO <<<
+        % Oggi: tracking ideale dei motori, x_true(4,k+1) = v_cmd.
+        % Domani: x_true(4,k+1) = f_slip(v_cmd, x_true(:,k), terreno, ...).
         xt = fleet(i).x_true(:, k);
         fleet(i).x_true(1, k+1) = xt(1) + xt(4) * cos(xt(3)) * Ts;
         fleet(i).x_true(2, k+1) = xt(2) + xt(4) * sin(xt(3)) * Ts;
@@ -242,6 +279,117 @@ for k = 1:N_steps-1
         fleet(i).x_true(4, k+1) = v_cmd;
         fleet(i).x_true(5, k+1) = w_cmd;
     end
+
+    % --- (4) SENSORI + (5) STIMA -----------------------------------------
+    for i = 1:N_veh
+        xt_next = fleet(i).x_true(:, k+1);      % stato reale a t_{k+1}
+
+        % Predizione da t_k a t_{k+1}
+        [x_pred, Sigma_bar] = ekf_predict(fleet(i).x_est(:, k), fleet(i).Sigma, Ts, Q);
+
+        % --- Blocco base: sempre disponibile (IMU + encoder) ---
+        z_imu = xt_next([3,5]) + chol(R_imu)' * randn(2,1);
+        z_enc = [(xt_next(4) + (param.L/2)*xt_next(5))/param.r;
+                 (xt_next(4) - (param.L/2)*xt_next(5))/param.r] + chol(R_enc)' * randn(2,1);
+
+        z      = [z_imu; z_enc];
+        z_pred = [ x_pred(3);
+                   x_pred(5);
+                  (x_pred(4) + (param.L/2)*x_pred(5))/param.r;
+                  (x_pred(4) - (param.L/2)*x_pred(5))/param.r ];
+        C_k      = [0 0 1 0 0;
+                  0 0 0 0 1;
+                  0 0 0 1/param.r  param.L/(2*param.r);
+                  0 0 0 1/param.r -param.L/(2*param.r)];
+        R_k  = blkdiag(R_imu, R_enc);
+
+        % Maschera delle componenti ANGOLARI di z: l'innovazione va wrappata
+        % solo dove ha senso. Cresce insieme a z, quindi resta corretta
+        % qualunque sia l'ordine con cui le misure vengono accodate.
+        is_angle = [true; false; false; false];     % solo theta dell'IMU
+
+        % --- Disponibilita' GPS: proprieta' fisica, valutata su xt_next ---
+        in_denied = false;
+        for z_idx = 1:length(gps_denied_zones)
+            centro = [gps_denied_zones(z_idx).xc; gps_denied_zones(z_idx).yc];
+            if norm(xt_next(1:2) - centro) <= gps_denied_zones(z_idx).raggio
+                in_denied = true;
+                break;
+            end
+        end
+        fleet(i).in_denied_hist(k+1) = in_denied;
+
+        if ~in_denied
+            % --- GPS attivo: misura diretta di posizione assoluta ---
+            z_gps    = xt_next(1:2) + chol(fleet(i).R_gps)' * randn(2,1);
+            z        = [z; z_gps];
+            z_pred   = [z_pred; x_pred(1:2)];
+            C_k        = [C_k; 1 0 0 0 0; 0 1 0 0 0];
+            R_k    = blkdiag(R_k, fleet(i).R_gps);
+            is_angle = [is_angle; false; false];
+        else
+            % --- GPS negato: ranging UWB verso le ancore FISSE ---
+            for a_idx = 1:size(uwb_opt, 1)
+                p_anc  = uwb_opt(a_idx, :)';
+                d_true = norm(xt_next(1:2) - p_anc);
+                if d_true <= r_ancora
+                    d_est = max(norm(x_pred(1:2) - p_anc), 0.1);   % previene div/0
+
+                    z        = [z; d_true + sigma_uwb * randn()];
+                    z_pred   = [z_pred; d_est];
+                    C_k        = [C_k; (x_pred(1)-p_anc(1))/d_est, (x_pred(2)-p_anc(2))/d_est, 0, 0, 0];
+                    R_k    = blkdiag(R_k, sigma_uwb^2);
+                    is_angle = [is_angle; false];
+                end
+            end
+
+            % --- Localizzazione collaborativa: vicini come ancore MOBILI ---
+            for j = 1:N_veh
+                if i ~= j
+                    % Misura FISICA: fra le posizioni reali a t_{k+1}
+                    d_true = norm(xt_next(1:2) - fleet(j).x_true(1:2, k+1));
+                    if d_true <= r_collab
+                        % Predizione della misura: usa la stima CONDIVISA del
+                        % vicino (propagata), non la sua posizione reale, che
+                        % il veicolo i non puo' conoscere.
+                        p_j   = p_ancora_mobile(:, j);
+                        d_est = max(norm(x_pred(1:2) - p_j), 0.1);
+
+                        z        = [z; d_true + sigma_collab * randn()];
+                        z_pred   = [z_pred; d_est];
+                        C_k        = [C_k; (x_pred(1)-p_j(1))/d_est, (x_pred(2)-p_j(2))/d_est, 0, 0, 0];
+                        % LIMITE NOTO: R contiene solo il rumore del sensore.
+                        % L'incertezza P_j della stima del vicino e' ignorata,
+                        % quindi il filtro risulta OTTIMISTA. Correzione prevista:
+                        %   R_eff = sigma_collab^2 + u' * P_j(1:2,1:2) * u
+                        % con u versore della congiungente. Richiede che il
+                        % vicino trasmetta anche il blocco 2x2 della propria Sigma.
+                        R_k    = blkdiag(R_k, sigma_collab^2);
+                        is_angle = [is_angle; false];
+                    end
+                end
+            end
+        end
+
+        % (5) Aggiornamento
+        [fleet(i).x_est(:, k+1), fleet(i).Sigma] = ...
+            ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R_k, is_angle);
+    end
+
+    % --- Terminazione: il Master ha completato il percorso ----------------
+    % Evita di simulare centinaia di secondi con la flotta ferma sull'ultimo
+    % waypoint, che falserebbero qualsiasi statistica calcolata sul run.
+    if fleet(1).target_idx >= num_punti_path && ...
+       norm(fleet(1).x_true(1:2, k+1) - path_points(end, :)') < 15.0
+        N_end = k + 1;
+        fprintf('Percorso completato a t = %.1f s (campione %d di %d).\n', ...
+                t(N_end), N_end, N_steps);
+        break;
+    end
+end
+
+if N_end == N_steps
+    warning('Il Master non ha completato il percorso entro t_end = %.0f s.', t_end);
 end
 disp('Simulazione completata.');
 
@@ -252,8 +400,8 @@ hold on; grid on; axis equal; axis([0 W_MAP 0 H_MAP]);
 % Disegna Zone GPS-Denied
 for z_idx = 1:length(gps_denied_zones)
     th_c = linspace(0, 2*pi, 100);
-    x_c = gps_denied_zones(z_idx).xc + gps_denied_zones(z_idx).R * cos(th_c);
-    y_c = gps_denied_zones(z_idx).yc + gps_denied_zones(z_idx).R * sin(th_c);
+    x_c = gps_denied_zones(z_idx).xc + gps_denied_zones(z_idx).raggio * cos(th_c);
+    y_c = gps_denied_zones(z_idx).yc + gps_denied_zones(z_idx).raggio * sin(th_c);
     patch(x_c, y_c, 'r', 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 end
 
@@ -267,16 +415,15 @@ end
 
 % Disegna Traiettorie Veicoli
 colors = ['b', 'r', 'g'];
+% N_end e' l'ultimo campione valido, restituito dal loop alla fine del percorso.
+% Sostituisce la ricerca euristica del primo zero in x_true, che confondeva un
+% campione non simulato con un veicolo realmente transitato per x = 0.
 for i = 1:N_veh
-    % Trova un punto in cui finisce la simulazione (escludiamo zeri se t_end eccessivo)
-    idx_end = find(fleet(i).x_true(1,:) == 0, 1) - 1;
-    if isempty(idx_end); idx_end = N_steps; end
-    
-    plot(fleet(i).x_true(1, 1:idx_end), fleet(i).x_true(2, 1:idx_end), [colors(i) '-'], 'LineWidth', 1.5, 'DisplayName', sprintf('True V%d', i));
-    plot(fleet(i).x_est(1, 1:idx_end), fleet(i).x_est(2, 1:idx_end), [colors(i) ':'], 'LineWidth', 1.5, 'DisplayName', sprintf('Est V%d', i));
-    
+    plot(fleet(i).x_true(1, 1:N_end), fleet(i).x_true(2, 1:N_end), [colors(i) '-'], 'LineWidth', 1.5, 'DisplayName', sprintf('True V%d', i));
+    plot(fleet(i).x_est(1, 1:N_end),  fleet(i).x_est(2, 1:N_end),  [colors(i) ':'], 'LineWidth', 1.5, 'DisplayName', sprintf('Est V%d', i));
+
     % Marker finale
-    plot(fleet(i).x_true(1, idx_end), fleet(i).x_true(2, idx_end), [colors(i) 'o'], 'MarkerFaceColor', colors(i));
+    plot(fleet(i).x_true(1, N_end), fleet(i).x_true(2, N_end), [colors(i) 'o'], 'MarkerFaceColor', colors(i));
 end
 
 title('Fase 3: Navigazione in Zone GPS-Denied'); xlabel('X [m]'); ylabel('Y [m]'); legend('Location', 'best');
@@ -285,7 +432,7 @@ title('Fase 3: Navigazione in Zone GPS-Denied'); xlabel('X [m]'); ylabel('Y [m]'
 % FUNZIONI LOCALI EKF
 % =========================================================================
 
-function [x_pred, P_pred] = ekf_predict(x_old, P_old, Ts, Q)
+function [x_pred, Sigma_bar] = ekf_predict(x_old, Sigma_old, Ts, Q)
     v_est = x_old(4); th_est = x_old(3); w_est = x_old(5);
     
     x_pred = x_old;
@@ -300,23 +447,24 @@ function [x_pred, P_pred] = ekf_predict(x_old, P_old, Ts, Q)
     A_k(2, 4) = sin(th_est) * Ts;
     A_k(3, 5) = Ts;
     
-    P_pred = A_k * P_old * A_k' + Q;
+    Sigma_bar = A_k * Sigma_old * A_k' + Q;
 end
 
-function [x_new, P_new] = ekf_update(x_pred, P_pred, z, z_pred, H, R)
-    S = H * P_pred * H' + R;
-    K = P_pred * H' / S;
-    
+function [x_new, Sigma_new] = ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R, is_angle)
+    S = C_k * Sigma_bar * C_k' + R;
+    K = Sigma_bar * C_k' / S;
+
     y_innov = z - z_pred;
-    
-    % Wrap dell'innovazione per gli angoli. 
-    % L'angolo theta proviene dall'IMU. L'IMU e l'Encoder sono sempre
-    % aggiunti per ultimi nel vettore z. Theta dell'IMU è il terzultimo elemento.
-    idx_theta = length(z) - 3; 
-    y_innov(idx_theta) = wrapToPi(y_innov(idx_theta));
-    
+
+    % Wrap dell'innovazione limitato alle sole componenti angolari, indicate
+    % dalla maschera logica costruita insieme a z. Sostituisce il calcolo per
+    % posizione (idx = length(z)-3), che era corretto solo finche' le misure
+    % venivano accodate in un ordine preciso e si sarebbe rotto in silenzio
+    % al primo cambio di ordinamento.
+    y_innov(is_angle) = wrapToPi(y_innov(is_angle));
+
     x_new = x_pred + K * y_innov;
     x_new(3) = wrapToPi(x_new(3));
-    
-    P_new = (eye(5) - K * H) * P_pred;
+
+    Sigma_new = (eye(5) - K * C_k) * Sigma_bar;
 end

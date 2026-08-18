@@ -8,16 +8,46 @@ W_MAP = 500; % [m] Larghezza mappa (X)
 H_MAP = 500; % [m] Altezza mappa (Y)
 
 % Parametri GPS-denied zones
-n_area = 8;      % Numero di zone buie
-r_area = 65;     % [m] Raggio delle zone
+% Le zone d'ombra reali (fondovalle, pareti rocciose, fasce boschive) non hanno
+% tutte la stessa estensione. Il raggio viene estratto uniformemente in
+% [r_area_min, r_area_max], con media 65 m: lo stesso valore che prima era
+% imposto identico a tutte le zone.
+n_area     = 8;      % Numero di zone buie
+r_area_min = 45;     % [m] Raggio minimo della zona d'ombra
+r_area_max = 85;     % [m] Raggio massimo
 
 % Parametri Percorso
 tipo_percorso = 'sinusoide'; 
 num_punti_path = 500; 
 
-% Parametri UWB
-n_ancore = 2;      % Numero di ancore installabili (aumentato per coprire le aree)
-r_ancora = 100;    % [m] Raggio di visibilità dell'ancora UWB
+% -------------------------------------------------------------------------
+% PARAMETRI UWB — tarati su hardware realmente in commercio
+%
+% Riferimenti di mercato compatibili con questo caso d'uso (outdoor, veicolare,
+% all-weather, ranging Two-Way Time-of-Flight):
+%
+%   Qorvo (ex Decawave) DW1000 / modulo DWM1001C
+%     - portata dichiarata fino a 290 m @ 110 kbps, 10% PER, LOS outdoor
+%     - fascia economica, adatta ad ancore a basso costo installabili in numero
+%
+%   Humatics (ex Time Domain) PulsON P440
+%     - 3.1-4.8 GHz, TW-TOF, risoluzione ~2 cm fino a 600 m e oltre
+%     - progettato per impiego outdoor all-weather e veicolare
+%     - fascia professionale, adatto alle ancore fisse su palo
+%
+% SCELTA: r_ancora = 150 m. E' la portata nominale del DW1000 (290 m) derata di
+% circa un fattore 2 per tenere conto di attenuazione da precipitazione nevosa,
+% ostruzioni parziali del terreno (NLOS) e margine sul Packet Error Rate.
+% Con hardware di classe P440 si potrebbe arrivare oltre i 300 m, ma 150 m
+% mantiene il problema di posizionamento non banale e il risultato conservativo.
+%
+% ALTEZZA D'ANTENNA: la letteratura sperimentale mostra che l'errore di ranging
+% cresce sensibilmente quando le antenne sono vicine al suolo. Si assume quindi
+% che le ancore siano montate su palo (3-4 m), coerentemente con l'ipotesi di
+% vista ottica su neve aperta.
+% -------------------------------------------------------------------------
+n_ancore = 5;      % Numero di ancore installabili
+r_ancora = 150;    % [m] Raggio di visibilita' dell'ancora UWB
 
 %% 2. GENERAZIONE DEL PERCORSO NOMINALE
 y_path = linspace(0, H_MAP, num_punti_path);
@@ -29,24 +59,26 @@ switch tipo_percorso
     case 'diagonale'
         x_path = linspace(0, W_MAP, num_punti_path);
     case 'arco'
-        R_arco = 200;
+        raggio_arco = 200;
         theta = linspace(pi, pi/2, num_punti_path);
-        x_path = W_MAP - R_arco + R_arco * cos(theta);
-        y_path = R_arco * sin(theta);
+        x_path = W_MAP - raggio_arco + raggio_arco * cos(theta);
+        y_path = raggio_arco * sin(theta);
 end
 path_points = [x_path', y_path'];
 
 %% 3. GENERAZIONE ZONE GPS-DENIED
 rng(42); % Manteniamo il seed fisso per fare in modo che la mappa sia riproducibile a ogni avvio. (Puoi rimuoverlo o cambiarlo se vuoi mappe sempre diverse)
 
-gps_denied_zones = struct('xc', {}, 'yc', {}, 'R', {});
+gps_denied_zones = struct('xc', {}, 'yc', {}, 'raggio', {});
 for i = 1:n_area
-    % Generazione casuale delle coordinate X e Y all'interno della mappa
-    % Usiamo un margine pari a r_area per evitare che il centro della zona
-    % venga generato esattamente sul bordo e "esca" dalla mappa.
-    gps_denied_zones(i).xc = r_area + rand() * (W_MAP - 2*r_area); 
-    gps_denied_zones(i).yc = r_area + rand() * (H_MAP - 2*r_area);
-    gps_denied_zones(i).R  = r_area;
+    % Raggio estratto per ogni zona: zone d'ombra di estensione disomogenea
+    r_i = r_area_min + rand() * (r_area_max - r_area_min);
+
+    % Coordinate del centro. Il margine pari a r_i evita che la zona venga
+    % generata a cavallo del bordo mappa ed "esca" dall'area simulata.
+    gps_denied_zones(i).xc     = r_i + rand() * (W_MAP - 2*r_i);
+    gps_denied_zones(i).yc     = r_i + rand() * (H_MAP - 2*r_i);
+    gps_denied_zones(i).raggio = r_i;
 end
 
 %% 4. ESTRAZIONE PUNTI CRITICI (Solo il percorso dentro le zone buie)
@@ -56,7 +88,7 @@ for k = 1:num_punti_path
     in_denied = false;
     for i = 1:n_area
         dist = norm(p - [gps_denied_zones(i).xc, gps_denied_zones(i).yc]);
-        if dist <= gps_denied_zones(i).R
+        if dist <= gps_denied_zones(i).raggio
             in_denied = true;
             break; % Se è in una zona, inutile controllare le altre
         end
@@ -73,7 +105,7 @@ if isempty(punti_critici)
     warning('Il percorso non attraversa le zone GPS-denied. Nessuna ottimizzazione necessaria.');
     uwb_opt = [];
 else
-    cost_func = @(p_uwb_vec) eval_mean_gdop(p_uwb_vec, punti_critici, r_ancora);
+    cost_func = @(p_uwb_vec) eval_mean_gdop(p_uwb_vec, punti_critici, r_ancora, W_MAP, H_MAP);
     
     % Initial guess intelligente: distribuiamo le ancore lungo i segmenti di percorso cieco
     p_uwb_init = zeros(1, 2*n_ancore);
@@ -81,16 +113,27 @@ else
     
     for idx = 1:n_ancore
         p_idx = min((idx-1)*step_idx + 1, size(punti_critici, 1));
-        % Posizioniamo l'ancora iniziale vicino al percorso, ma con un leggero offset 
-        % (15m) per evitare che partano esattamente collineari al percorso,
-        % cosa che farebbe esplodere la GDOP al primo step.
-        offset_dir = (-1)^idx; % Le alterniamo a destra e a sinistra
-        p_uwb_init(2*idx-1) = punti_critici(p_idx, 1) + offset_dir * 15;
-        p_uwb_init(2*idx)   = punti_critici(p_idx, 2) + offset_dir * 15;
+        % Posizioniamo l'ancora iniziale vicino al percorso, ma con un offset
+        % laterale per evitare che parta esattamente collineare al percorso:
+        % ancore collineari danno una geometria degenere e fanno esplodere la
+        % GDOP al primo passo. L'offset e' una frazione del raggio di
+        % visibilita', cosi' resta sensato se r_ancora cambia.
+        offset_dir = (-1)^idx;              % le alterniamo a destra e a sinistra
+        offset_mag = 0.3 * r_ancora;
+        p_uwb_init(2*idx-1) = punti_critici(p_idx, 1) + offset_dir * offset_mag;
+        p_uwb_init(2*idx)   = punti_critici(p_idx, 2) + offset_dir * offset_mag;
     end
     
-    % Ottimizzazione
-    options = optimset('Display','iter', 'MaxFunEvals', 4000, 'MaxIter', 2000);
+    % Ottimizzazione.
+    % NOTA sul metodo: fminsearch implementa Nelder-Mead, che e' derivative-free
+    % e non vincolato. Con n_ancore = 5 lo spazio di ricerca ha 10 dimensioni,
+    % al limite superiore di affidabilita' del metodo: il risultato e' un minimo
+    % LOCALE dipendente dall'initial guess, non l'ottimo globale. E' accettabile
+    % perche' l'initial guess e' informato (ancore distribuite lungo il percorso
+    % cieco), ma va dichiarato. Alternative piu' solide: multi-start, oppure
+    % fmincon con vincoli di scatola espliciti se disponibile la Optimization
+    % Toolbox.
+    options = optimset('Display','iter', 'MaxFunEvals', 8000, 'MaxIter', 4000);
     p_uwb_ottimo = fminsearch(cost_func, p_uwb_init, options);
     
     uwb_opt = reshape(p_uwb_ottimo, 2, n_ancore)';
@@ -104,8 +147,8 @@ axis([0 W_MAP 0 H_MAP]);
 % Disegna Zone GPS-Denied (Cerchi rossi semi-trasparenti)
 for i = 1:n_area
     th = linspace(0, 2*pi, 100);
-    x_c = gps_denied_zones(i).xc + gps_denied_zones(i).R * cos(th);
-    y_c = gps_denied_zones(i).yc + gps_denied_zones(i).R * sin(th);
+    x_c = gps_denied_zones(i).xc + gps_denied_zones(i).raggio * cos(th);
+    y_c = gps_denied_zones(i).yc + gps_denied_zones(i).raggio * sin(th);
     patch(x_c, y_c, 'r', 'FaceAlpha', 0.2, 'EdgeColor', 'r', 'LineStyle', '--', 'DisplayName', 'GPS-Denied Zone');
 end
 
@@ -133,13 +176,20 @@ xlabel('X [m]'); ylabel('Y [m]');
 [~, obj_h] = legend('Location', 'best');
 
 %% 7. SALVATAGGIO DATI
-save('ambiente_fase3.mat', 'W_MAP', 'H_MAP', 'gps_denied_zones', 'tipo_percorso', 'path_points', 'uwb_opt', 'r_ancora');
-disp('Ambiente generato e salvato in "ambiente_fase3.mat".');
+% Il file viene sempre scritto nella RADICE del progetto, indipendentemente
+% dalla cartella corrente: eseguendo lo script dall'IDE la working directory
+% diventa fase_3/, e senza questo accorgimento si creerebbe una seconda copia
+% dell'ambiente che puo' divergere silenziosamente da quella usata da main3.
+root_progetto = fileparts(fileparts(mfilename('fullpath')));
+file_out = fullfile(root_progetto, 'ambiente_fase3.mat');
+save(file_out, 'W_MAP', 'H_MAP', 'gps_denied_zones', 'tipo_percorso', ...
+     'path_points', 'uwb_opt', 'r_ancora');
+fprintf('Ambiente generato e salvato in "%s".\n', file_out);
 
 %% ========================================================================
 % FUNZIONI LOCALI
 % =========================================================================
-function mean_gdop = eval_mean_gdop(uwb_vec, punti, r_ancora)
+function mean_gdop = eval_mean_gdop(uwb_vec, punti, r_ancora, W_MAP, H_MAP)
     anchors = reshape(uwb_vec, 2, [])';
     N_anchors = size(anchors, 1);
     N_punti = size(punti, 1);
@@ -147,23 +197,23 @@ function mean_gdop = eval_mean_gdop(uwb_vec, punti, r_ancora)
     
     for k = 1:N_punti
         p = punti(k, :);
-        H_mat = [];
+        C_geom = [];
         
         for i = 1:N_anchors
             dist = norm(p - anchors(i, :));
             % L'ancora è visibile solo se entro il suo raggio
             if dist <= r_ancora
                 dist = max(dist, 0.1); 
-                H_mat = [H_mat; (p(1) - anchors(i, 1))/dist, (p(2) - anchors(i, 2))/dist];
+                C_geom = [C_geom; (p(1) - anchors(i, 1))/dist, (p(2) - anchors(i, 2))/dist];
             end
         end
         
         % Penalità progressiva: se non abbiamo almeno 2 ancore, impossibile calcolare posa 2D
-        visibili = size(H_mat, 1);
+        visibili = size(C_geom, 1);
         if visibili < 2
             gdop_sum = gdop_sum + 1e5 + (2 - visibili) * 50000;
         else
-            G = H_mat' * H_mat;
+            G = C_geom' * C_geom;
             if rcond(G) < 1e-8
                 gdop_sum = gdop_sum + 2000; % Matrice quasi singolare
             else
@@ -172,4 +222,13 @@ function mean_gdop = eval_mean_gdop(uwb_vec, punti, r_ancora)
         end
     end
     mean_gdop = gdop_sum / N_punti;
+
+    % VINCOLO DI INSTALLABILITA': le ancore devono cadere dentro i confini
+    % dell'area di lavoro. fminsearch e' un ottimizzatore NON vincolato, quindi
+    % il vincolo va imposto come penalita' additiva sulla funzione di costo,
+    % altrimenti l'ottimizzatore e' libero di collocare un'ancora fuori mappa
+    % (soluzione matematicamente valida ma fisicamente non realizzabile).
+    viol = sum(max(0, -anchors(:,1)) + max(0, anchors(:,1) - W_MAP)) + ...
+           sum(max(0, -anchors(:,2)) + max(0, anchors(:,2) - H_MAP));
+    mean_gdop = mean_gdop + 10 * viol;
 end

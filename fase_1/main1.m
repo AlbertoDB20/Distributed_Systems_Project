@@ -3,6 +3,34 @@
 % =========================================================================
 clear; clc; close all;
 
+% -------------------------------------------------------------------------
+% NOTAZIONE (Thrun, "Probabilistic Robotics") — identica in tutte le fasi
+%
+%   Modello:   x_t = f(x_{t-1}, u_t) + eps_t     cov(eps) = Q   [processo]
+%              z_t = h(x_t)          + delta_t   cov(delta) = R [misura]
+%
+%   A_k      Jacobiano df/dx        (nel testo A_t)
+%   C_k      Jacobiano dh/dx        (nel testo C_t)
+%   Q        covarianza rumore di PROCESSO
+%   R        covarianza rumore di MISURA
+%   Sigma    covarianza della stima (nel testo Sigma_t)
+%   K        guadagno di Kalman
+%   S        covarianza dell'innovazione, S = C*Sigma_bar*C' + R
+%            (nel testo compare solo come parentesi interna di K_t)
+%
+%   Corrispondenza per i VETTORI (nel codice tenuti espliciti per leggibilita'):
+%   x_est  <-> mu_t        (stima a posteriori)
+%   x_pred <-> mu_bar_t    (stima a priori / predetta)
+%   Sigma_bar <-> Sigma_bar_t (covarianza predetta)
+%
+%   NOTA — Assenza del termine B_t*u_t: nel modello di riferimento la
+%   predizione usa l'ingresso comandato. Qui NO: v e omega sono STATI stimati,
+%   osservati dagli encoder, e la predizione e' un random walk su di essi.
+%   Scelta deliberata: su terreno scivoloso il comando NON coincide con la
+%   velocita' reale, quindi usarlo come ingresso correlerebbe il rumore di
+%   processo con l'ingresso stesso, violando le ipotesi del filtro.
+% -------------------------------------------------------------------------
+
 %% 1. PARAMETRI DI SISTEMA
 r_veicolo = 0.5;      % [m] raggio ruote
 L_veicolo = 1.0;      % [m] distanza tra le ruote
@@ -77,7 +105,7 @@ end
 x_est = zeros(5, N_steps);
 % Inizializziamo con piccolo errore
 x_est(:,1) = x_true(:,1) + [1; -1; 0.1; 0; 0]; 
-P = diag([5, 5, 0.5, 1, 1]); % Covarianza iniziale
+Sigma = diag([5, 5, 0.5, 1, 1]); % Covarianza iniziale
 
 %% 6. LOOP EKF
 for k = 1:N_steps-1
@@ -102,7 +130,7 @@ for k = 1:N_steps-1
     A_k(3, 5) = Ts;
     
     % Aggiornamento Covarianza
-    P_pred = A_k * P * A_k' + Q;
+    Sigma_bar = A_k * Sigma * A_k' + Q;
     
     % --- 6.2 AGGIORNAMENTO (UPDATE) ---
     % Modello di misura predetto h(x_pred)
@@ -126,8 +154,8 @@ for k = 1:N_steps-1
     C_k = [C_gps; C_imu; C_enc];
     
     % Calcolo Guadagno di Kalman K
-    S = C_k * P_pred * C_k' + R;
-    K = P_pred * C_k' / S;
+    S = C_k * Sigma_bar * C_k' + R;
+    K = Sigma_bar * C_k' / S;
     
     % Correzione dello stato
     y_innov = z_history(:, k+1) - z_pred;
@@ -138,7 +166,7 @@ for k = 1:N_steps-1
     x_est(3, k+1) = wrapToPi(x_est(3, k+1)); % Mantieni theta in [-pi, pi]
     
     % Aggiornamento Covarianza stimata
-    P = (eye(5) - K * C_k) * P_pred;
+    Sigma = (eye(5) - K * C_k) * Sigma_bar;
 end
 
 %% 7. PLOT RISULTATI
