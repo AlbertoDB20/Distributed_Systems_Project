@@ -1,7 +1,18 @@
 % =========================================================================
 % FASE 2: Flotta N=3, Consenso e GPS Differenziato
 % =========================================================================
-clear; clc; close all;
+% MODO BATCH — Lanciando lo script normalmente si riparte da ambiente pulito.
+% Definendo MODO_BATCH = true nel workspace PRIMA di chiamarlo (campagne Monte
+% Carlo, vedi common/verifica_consistenza.m) le variabili gia' impostate
+% sopravvivono e vengono disattivate animazione e grafici, che altrimenti
+% dominerebbero il tempo di esecuzione su decine di run.
+if ~exist('MODO_BATCH','var')
+    clear; clc; close all;
+    MODO_BATCH = false;
+end
+
+% Funzioni condivise fra le fasi (calcola_Q_cwna, ...)
+addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'common'));
 
 % -------------------------------------------------------------------------
 % NOTAZIONE (Thrun, "Probabilistic Robotics") — identica in tutte le fasi
@@ -31,7 +42,8 @@ clear; clc; close all;
 %   processo con l'ingresso stesso, violando le ipotesi del filtro.
 % -------------------------------------------------------------------------
 
-lin_traj = false; 
+lin_traj = false;
+run_animazione = ~MODO_BATCH;
 
 %% 1. PARAMETRI DI SISTEMA
 % -------------------------------------------------------------------------
@@ -64,9 +76,48 @@ N_steps = length(t);
 N_veh = 3;             % Numero di veicoli
 
 %% 2. PARAMETRI DEL FILTRO E SENSORI
-sigma_v_proc = 0.5;   
-sigma_w_proc = 0.2;   
-Q = diag([0.01, 0.01, 0.01, sigma_v_proc^2, sigma_w_proc^2]);       % Covarianza del rumore di PROCESSO (modello dinamico)
+% -------------------------------------------------------------------------
+% RUMORE DI PROCESSO — modello CWNA (Continuous White Noise Acceleration)
+%
+% Q non e' piu' una matrice diagonale costante ma viene ricostruita a ogni
+% passo di predizione da calcola_Q_cwna(). Due ragioni, entrambe sostanziali:
+%
+% 1) STRUTTURA FISICA. Nel modello uniciclo la posizione non ha dinamica
+%    propria: cambia solo perche' v e theta sono incerti. Una Q diagonale
+%    inietta rumore direttamente su x e y, cioe' afferma che il veicolo si
+%    sposta lateralmente anche da fermo. Nel modello CWNA il rumore entra
+%    sulle ACCELERAZIONI — dove agisce fisicamente lo slittamento — e si
+%    propaga alla posizione attraverso il modello, generando anche le
+%    CORRELAZIONI posizione-velocita' che una diagonale butta via.
+%
+% 2) SCALATURA SU Ts. Q_d e' proporzionale a Ts (e a Ts^2/2, Ts^3/3 nei
+%    termini propagati). La formulazione precedente sommava una costante a
+%    ogni passo: cambiare la frequenza di campionamento ri-tarava
+%    silenziosamente il filtro. E' il prerequisito per il multi-rate di Fase 4.
+%
+% I valori sono espressi come densita' spettrali e si leggono cosi': dopo 1 s
+% di sola predizione, l'incertezza accumulata vale sqrt(q * 1s).
+par_Q.q_a       = 0.10;   % [m^2/s^3]   accel. longitudinale (slittam. in trazione)
+                          %             -> sigma_v cresce di 0.32 m/s in 1 s
+par_Q.q_alpha   = 0.01;   % [rad^2/s^3] accel. angolare (slittam. in sterzata)
+                          %             -> sigma_omega cresce di 0.10 rad/s in 1 s
+par_Q.q_lat     = 0.02;   % [m^2/s]     deriva laterale su pendio innevato
+                          %             -> 0.14 m di scarto laterale in 1 s.
+                          %             Canale indispensabile: senza, Q_d e'
+                          %             SINGOLARE (rango 4/5) perche' il modello
+                          %             uniciclo non puo' descrivere traslazione
+                          %             laterale, e l'incertezza perpendicolare
+                          %             alla marcia non crescerebbe mai.
+par_Q.k_terreno = 0.0;    % [1/s]       Q adattiva: q_a += k_terreno*v^2.
+                          %             Inattiva finche' l'impianto non simula
+                          %             uno slittamento reale (Fase 5).
+%
+% NOTA DI TARATURA. La ground truth attuale ha rumore di processo NULLO
+% (tracking ideale degli attuatori), quindi questi valori sono deliberatamente
+% conservativi rispetto all'impianto simulato: il filtro risulta pessimista,
+% non ottimista. E' la condizione sicura. La calibrazione onesta di q_a e
+% q_alpha sara' possibile solo in Fase 5, contro uno slittamento vero.
+% -------------------------------------------------------------------------
 
 % GPS: Master (1) ha qualità eccellente, Slave (2,3) standard
 sigma_gps_master = 0.2;  % [m]
@@ -165,6 +216,9 @@ for i = 1:N_veh
     fleet(i).F_cons_hist = zeros(2, N_steps);
     fleet(i).F_rep_hist  = zeros(2, N_steps);
     fleet(i).u_hist      = zeros(2, N_steps);   % comandi [v; w] applicati
+    fleet(i).Sigma_hist  = zeros(5, 5, N_steps);  % storico covarianza, per
+                                                  % 3-sigma bounds e test NEES
+    fleet(i).Sigma_hist(:,:,1) = fleet(i).Sigma;
     
     % Assegna R_gps (Covarianza del rumore di MISURA GPS) specifica in base al ruolo
     if i == 1
@@ -286,11 +340,13 @@ for k = 1:N_steps-1
         % Sensori indipendenti -> R totale diagonale a blocchi (6x6)
         R_k = blkdiag(fleet(i).R_gps, R_imu, R_enc);
         [fleet(i).x_est(:, k+1), fleet(i).Sigma] = ...
-            ekf_step(fleet(i).x_est(:, k), fleet(i).Sigma, z, Ts, Q, R_k, param);
+            ekf_step(fleet(i).x_est(:, k), fleet(i).Sigma, z, Ts, par_Q, R_k, param);
+        fleet(i).Sigma_hist(:,:,k+1) = fleet(i).Sigma;
     end
 end
 
 %% 6. PLOT RISULTATI E ANIMAZIONE REAL-TIME
+if ~MODO_BATCH
 figure('Name','Animazione Flotta e Formazione','Color','w'); 
 hold on; grid on; axis equal;
 title('Animazione della Traiettoria (Reale vs Stimata)'); 
@@ -315,7 +371,7 @@ legend([h_est_pos(1), h_est_pos(2), h_est_pos(3)], {'Master (V1)', 'Slave (V2)',
 
 % Loop di Animazione
 step_animazione = 2; % Salta un frame per velocizzare l'animazione (cambia a 1 per fluidità massima)
-for k = 1:step_animazione:N_steps
+for k = 1:step_animazione:(N_steps * run_animazione)
     for i = 1:N_veh
         % Aggiorna le linee (storia)
         set(h_true_trail(i), 'XData', fleet(i).x_true(1, 1:k), 'YData', fleet(i).x_true(2, 1:k));
@@ -408,6 +464,8 @@ for i = 1:N_veh
     subplot(2, N_veh, i+N_veh); ylim([0, max(0.1, max(mag_F_rep)*1.2)]);
 end
 
+end  % if ~MODO_BATCH  (fine blocco grafici)
+
 %% ========================================================================
 % FUNZIONI LOCALI
 % =========================================================================
@@ -431,7 +489,7 @@ function z = genera_misure(x_true, R_gps, R_imu, R_enc, param)
     z = [z_gps; z_imu; z_enc];
 end
 
-function [x_new, Sigma_new] = ekf_step(x_old, Sigma_old, z, Ts, Q, R, param)
+function [x_new, Sigma_new] = ekf_step(x_old, Sigma_old, z, Ts, par_Q, R, param)
     % 1. PREDIZIONE
     v_est = x_old(4); w_est = x_old(5); th_est = x_old(3);
     
@@ -447,7 +505,9 @@ function [x_new, Sigma_new] = ekf_step(x_old, Sigma_old, z, Ts, Q, R, param)
     A_k(2, 4) = sin(th_est) * Ts;
     A_k(3, 5) = Ts;
     
-    Sigma_bar = A_k * Sigma_old * A_k' + Q;
+    % Q ricalcolata a ogni passo: dipende da theta (e da v se k_terreno > 0)
+    Q_k = calcola_Q_cwna(th_est, v_est, Ts, par_Q);
+    Sigma_bar = A_k * Sigma_old * A_k' + Q_k;
     
     % 2. UPDATE
     z_pred_gps = [x_pred(1); x_pred(2)];

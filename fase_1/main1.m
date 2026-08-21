@@ -3,6 +3,9 @@
 % =========================================================================
 clear; clc; close all;
 
+% Funzioni condivise fra le fasi (calcola_Q_cwna, ...)
+addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'common'));
+
 % -------------------------------------------------------------------------
 % NOTAZIONE (Thrun, "Probabilistic Robotics") — identica in tutte le fasi
 %
@@ -42,11 +45,48 @@ t = 0:Ts:t_end;
 N_steps = length(t);
 
 %% 2. PARAMETRI DEL FILTRO
-% Q: Covarianza del rumore di processo (incertezza del modello / slittamento)
-% Varianze: X, Y, theta (piccole, dipendono da v e w), V, W (più alte)
-sigma_v_proc = 0.5;   % Incertezza sull'accelerazione/slittamento
-sigma_w_proc = 0.2;   
-Q = diag([0.01, 0.01, 0.01, sigma_v_proc^2, sigma_w_proc^2]);
+% -------------------------------------------------------------------------
+% RUMORE DI PROCESSO — modello CWNA (Continuous White Noise Acceleration)
+%
+% Q non e' piu' una matrice diagonale costante ma viene ricostruita a ogni
+% passo di predizione da calcola_Q_cwna(). Due ragioni, entrambe sostanziali:
+%
+% 1) STRUTTURA FISICA. Nel modello uniciclo la posizione non ha dinamica
+%    propria: cambia solo perche' v e theta sono incerti. Una Q diagonale
+%    inietta rumore direttamente su x e y, cioe' afferma che il veicolo si
+%    sposta lateralmente anche da fermo. Nel modello CWNA il rumore entra
+%    sulle ACCELERAZIONI — dove agisce fisicamente lo slittamento — e si
+%    propaga alla posizione attraverso il modello, generando anche le
+%    CORRELAZIONI posizione-velocita' che una diagonale butta via.
+%
+% 2) SCALATURA SU Ts. Q_d e' proporzionale a Ts (e a Ts^2/2, Ts^3/3 nei
+%    termini propagati). La formulazione precedente sommava una costante a
+%    ogni passo: cambiare la frequenza di campionamento ri-tarava
+%    silenziosamente il filtro. E' il prerequisito per il multi-rate di Fase 4.
+%
+% I valori sono espressi come densita' spettrali e si leggono cosi': dopo 1 s
+% di sola predizione, l'incertezza accumulata vale sqrt(q * 1s).
+par_Q.q_a       = 0.10;   % [m^2/s^3]   accel. longitudinale (slittam. in trazione)
+                          %             -> sigma_v cresce di 0.32 m/s in 1 s
+par_Q.q_alpha   = 0.01;   % [rad^2/s^3] accel. angolare (slittam. in sterzata)
+                          %             -> sigma_omega cresce di 0.10 rad/s in 1 s
+par_Q.q_lat     = 0.02;   % [m^2/s]     deriva laterale su pendio innevato
+                          %             -> 0.14 m di scarto laterale in 1 s.
+                          %             Canale indispensabile: senza, Q_d e'
+                          %             SINGOLARE (rango 4/5) perche' il modello
+                          %             uniciclo non puo' descrivere traslazione
+                          %             laterale, e l'incertezza perpendicolare
+                          %             alla marcia non crescerebbe mai.
+par_Q.k_terreno = 0.0;    % [1/s]       Q adattiva: q_a += k_terreno*v^2.
+                          %             Inattiva finche' l'impianto non simula
+                          %             uno slittamento reale (Fase 5).
+%
+% NOTA DI TARATURA. La ground truth attuale ha rumore di processo NULLO
+% (tracking ideale degli attuatori), quindi questi valori sono deliberatamente
+% conservativi rispetto all'impianto simulato: il filtro risulta pessimista,
+% non ottimista. E' la condizione sicura. La calibrazione onesta di q_a e
+% q_alpha sara' possibile solo in Fase 5, contro uno slittamento vero.
+% -------------------------------------------------------------------------
 
 % R: Covarianza dei sensori
 sigma_gps_xy = 1.5;   % [m] rumore GPS 
@@ -130,7 +170,9 @@ for k = 1:N_steps-1
     A_k(3, 5) = Ts;
     
     % Aggiornamento Covarianza
-    Sigma_bar = A_k * Sigma * A_k' + Q;
+    % Q ricalcolata a ogni passo: dipende da theta (e da v se k_terreno > 0)
+    Q_k = calcola_Q_cwna(th_est, v_est, Ts, par_Q);
+    Sigma_bar = A_k * Sigma * A_k' + Q_k;
     
     % --- 6.2 AGGIORNAMENTO (UPDATE) ---
     % Modello di misura predetto h(x_pred)

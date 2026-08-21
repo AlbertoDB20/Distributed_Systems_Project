@@ -3,6 +3,9 @@
 % =========================================================================
 clear; clc; close all;
 
+% Funzioni condivise fra le fasi (calcola_Q_cwna, ...)
+addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'common'));
+
 % -------------------------------------------------------------------------
 % NOTAZIONE (Thrun, "Probabilistic Robotics") — identica in tutte le fasi
 %
@@ -60,7 +63,48 @@ N_steps = length(t);
 N_veh = 3;             % 1 Master, 2 Slaves
 
 %% 3. PARAMETRI RUMORE SENSORI
-Q = diag([0.05, 0.05, 0.01, 0.5^2, 0.2^2]); % Rumore di processo
+% -------------------------------------------------------------------------
+% RUMORE DI PROCESSO — modello CWNA (Continuous White Noise Acceleration)
+%
+% Q non e' piu' una matrice diagonale costante ma viene ricostruita a ogni
+% passo di predizione da calcola_Q_cwna(). Due ragioni, entrambe sostanziali:
+%
+% 1) STRUTTURA FISICA. Nel modello uniciclo la posizione non ha dinamica
+%    propria: cambia solo perche' v e theta sono incerti. Una Q diagonale
+%    inietta rumore direttamente su x e y, cioe' afferma che il veicolo si
+%    sposta lateralmente anche da fermo. Nel modello CWNA il rumore entra
+%    sulle ACCELERAZIONI — dove agisce fisicamente lo slittamento — e si
+%    propaga alla posizione attraverso il modello, generando anche le
+%    CORRELAZIONI posizione-velocita' che una diagonale butta via.
+%
+% 2) SCALATURA SU Ts. Q_d e' proporzionale a Ts (e a Ts^2/2, Ts^3/3 nei
+%    termini propagati). La formulazione precedente sommava una costante a
+%    ogni passo: cambiare la frequenza di campionamento ri-tarava
+%    silenziosamente il filtro. E' il prerequisito per il multi-rate di Fase 4.
+%
+% I valori sono espressi come densita' spettrali e si leggono cosi': dopo 1 s
+% di sola predizione, l'incertezza accumulata vale sqrt(q * 1s).
+par_Q.q_a       = 0.10;   % [m^2/s^3]   accel. longitudinale (slittam. in trazione)
+                          %             -> sigma_v cresce di 0.32 m/s in 1 s
+par_Q.q_alpha   = 0.01;   % [rad^2/s^3] accel. angolare (slittam. in sterzata)
+                          %             -> sigma_omega cresce di 0.10 rad/s in 1 s
+par_Q.q_lat     = 0.02;   % [m^2/s]     deriva laterale su pendio innevato
+                          %             -> 0.14 m di scarto laterale in 1 s.
+                          %             Canale indispensabile: senza, Q_d e'
+                          %             SINGOLARE (rango 4/5) perche' il modello
+                          %             uniciclo non puo' descrivere traslazione
+                          %             laterale, e l'incertezza perpendicolare
+                          %             alla marcia non crescerebbe mai.
+par_Q.k_terreno = 0.0;    % [1/s]       Q adattiva: q_a += k_terreno*v^2.
+                          %             Inattiva finche' l'impianto non simula
+                          %             uno slittamento reale (Fase 5).
+%
+% NOTA DI TARATURA. La ground truth attuale ha rumore di processo NULLO
+% (tracking ideale degli attuatori), quindi questi valori sono deliberatamente
+% conservativi rispetto all'impianto simulato: il filtro risulta pessimista,
+% non ottimista. E' la condizione sicura. La calibrazione onesta di q_a e
+% q_alpha sara' possibile solo in Fase 5, contro uno slittamento vero.
+% -------------------------------------------------------------------------
 
 % Rumori di misura
 R_gps_master = diag([0.2^2, 0.2^2]);
@@ -153,11 +197,14 @@ for i = 1:N_veh
     fleet(i).Sigma      = diag([2, 2, 0.1, 1, 1]);
     fleet(i).u_hist         = zeros(2, N_steps);    % comandi [v; w] applicati
     fleet(i).in_denied_hist = false(1, N_steps);    % storico copertura GPS
+    fleet(i).Sigma_hist     = zeros(5, 5, N_steps); % storico covarianza, per
+                                                    % 3-sigma bounds e test NEES
 
     % Offset geometrico iniziale per la formazione (riferimento globale)
     pos_iniziale = origine_form + pos_des(i,:)';
 
     fleet(i).x_true(:,1) = [pos_iniziale(1); pos_iniziale(2); dir_iniziale; 0; 0];
+    fleet(i).Sigma_hist(:,:,1) = fleet(i).Sigma;
     fleet(i).x_est(:,1)  = fleet(i).x_true(:,1) + [(rand(2,1)-0.5)*2; 0; 0; 0]; % Piccolo errore iniziale
     
     if i == 1
@@ -285,7 +332,7 @@ for k = 1:N_steps-1
         xt_next = fleet(i).x_true(:, k+1);      % stato reale a t_{k+1}
 
         % Predizione da t_k a t_{k+1}
-        [x_pred, Sigma_bar] = ekf_predict(fleet(i).x_est(:, k), fleet(i).Sigma, Ts, Q);
+        [x_pred, Sigma_bar] = ekf_predict(fleet(i).x_est(:, k), fleet(i).Sigma, Ts, par_Q);
 
         % --- Blocco base: sempre disponibile (IMU + encoder) ---
         z_imu = xt_next([3,5]) + chol(R_imu)' * randn(2,1);
@@ -374,6 +421,7 @@ for k = 1:N_steps-1
         % (5) Aggiornamento
         [fleet(i).x_est(:, k+1), fleet(i).Sigma] = ...
             ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R_k, is_angle);
+        fleet(i).Sigma_hist(:,:,k+1) = fleet(i).Sigma;
     end
 
     % --- Terminazione: il Master ha completato il percorso ----------------
@@ -432,7 +480,7 @@ title('Fase 3: Navigazione in Zone GPS-Denied'); xlabel('X [m]'); ylabel('Y [m]'
 % FUNZIONI LOCALI EKF
 % =========================================================================
 
-function [x_pred, Sigma_bar] = ekf_predict(x_old, Sigma_old, Ts, Q)
+function [x_pred, Sigma_bar] = ekf_predict(x_old, Sigma_old, Ts, par_Q)
     v_est = x_old(4); th_est = x_old(3); w_est = x_old(5);
     
     x_pred = x_old;
@@ -447,7 +495,9 @@ function [x_pred, Sigma_bar] = ekf_predict(x_old, Sigma_old, Ts, Q)
     A_k(2, 4) = sin(th_est) * Ts;
     A_k(3, 5) = Ts;
     
-    Sigma_bar = A_k * Sigma_old * A_k' + Q;
+    % Q ricalcolata a ogni passo: dipende da theta (e da v se k_terreno > 0)
+    Q_k = calcola_Q_cwna(th_est, v_est, Ts, par_Q);
+    Sigma_bar = A_k * Sigma_old * A_k' + Q_k;
 end
 
 function [x_new, Sigma_new] = ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R, is_angle)

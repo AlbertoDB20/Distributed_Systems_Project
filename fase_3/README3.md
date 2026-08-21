@@ -66,13 +66,22 @@ Resta il 28.1% di campioni in cui **nessun** veicolo dispone di riferimenti asso
 
 **c) Effetto dell'infrastruttura UWB sulla qualità della stima.** Il passaggio da 2 a 5 ancore, con raggio di visibilità portato da 100 m a 150 m su base hardware reale (§2.2 del README principale), produce l'effetto più marcato dell'intera fase. Errore medio di posizione, run completo:
 
-| Veicolo | MAE con GPS | MAE in zona GPS-denied (2 ancore, r=100 m) | MAE in zona GPS-denied (5 ancore, r=150 m) |
-|---|---|---|---|
-| V1 (Master, GPS RTK) | 0.17 m | 3.36 m | **0.22 m** |
-| V2 (Slave, GPS standard) | 0.58 m | 2.19 m | **0.23 m** |
-| V3 (Slave, GPS standard) | 0.60 m | 2.53 m | **0.22 m** |
+Errore medio di posizione su run completo, nelle tre configurazioni successive:
 
-Due letture meritano di essere riportate. La prima: con un'infrastruttura UWB adeguata l'attraversamento delle zone cieche cessa di essere un degrado e diventa quasi trasparente, con un miglioramento di oltre un ordine di grandezza. La seconda, meno attesa: **per gli Slave la stima in zona GPS-denied è più accurata che a cielo aperto** (0.23 m contro 0.58 m). Non è un paradosso — il ranging UWB a $\sigma = 0.5$ m da ancore geometricamente ben distribuite porta più informazione di un GPS standard a $\sigma = 2.0$ m. Il risultato suggerisce che, in un'area attrezzata con ancore, converrebbe fondere UWB e GPS *simultaneamente* anziché commutare fra i due: l'architettura a $C$ di dimensione variabile lo consente già senza modifiche strutturali.
+| Veicolo | 2 ancore r=100 m, $Q$ diagonale | 5 ancore r=150 m, $Q$ diagonale | 5 ancore r=150 m, $Q$ CWNA |
+|---|---|---|---|
+| | con GPS / al buio | con GPS / al buio | con GPS / al buio |
+| V1 (Master, GPS RTK) | 0.17 / 3.36 m | 0.17 / 0.22 m | **0.061 / 0.072 m** |
+| V2 (Slave, GPS standard) | 0.58 / 2.19 m | 0.58 / 0.23 m | **0.194 / 0.077 m** |
+| V3 (Slave, GPS standard) | 0.60 / 2.53 m | 0.60 / 0.22 m | **0.195 / 0.071 m** |
+
+Tre letture meritano di essere riportate.
+
+*Infrastruttura.* Con un numero adeguato di ancore l'attraversamento delle zone cieche cessa di essere un degrado e diventa quasi trasparente: da 3.36 m a 0.22 m per il Master, oltre un ordine di grandezza a parità di filtro.
+
+*Rumore di processo.* La riformulazione di $Q$ in forma CWNA (README principale, §2.5) porta un ulteriore fattore 3 su tutti i veicoli, senza toccare né sensori né infrastruttura. È informazione che era già disponibile nel modello di moto e che la $Q$ diagonale costringeva il filtro a scartare.
+
+*Un risultato controintuitivo.* **Per gli Slave la stima in zona GPS-denied è più accurata che a cielo aperto** (0.077 m contro 0.194 m). Non è un paradosso: il ranging UWB a $\sigma = 0.5$ m da ancore geometricamente ben distribuite porta più informazione di un GPS standard a $\sigma = 2.0$ m. Il risultato suggerisce che, in un'area attrezzata con ancore, converrebbe fondere UWB e GPS *simultaneamente* anziché commutare fra i due — l'architettura a $C$ di dimensione variabile lo consente già senza modifiche strutturali.
 
 **d) Errore di inseguimento a regime della formazione.** Le distanze $d_{12}$ e $d_{13}$ si assestano a circa 39.9 m contro un target di 36.1 m, mentre $d_{23}$ resta esatta (40.0 m). Non è rumore: è l'errore a regime di un controllo puramente proporzionale che insegue un riferimento in movimento. Solo il Master riceve il termine di velocità $V_{rif}$ del path following; gli Slave si muovono unicamente per effetto del consenso, e devono quindi mantenere un errore di formazione non nullo per generare la velocità necessaria a stare al passo. L'errore è di modo comune lungo la direzione del moto, ed è per questo che la distanza fra i due Slave — simmetrici rispetto al Master — resta corretta. La correzione naturale è un termine di feedforward: propagare $V_{rif}$ a tutta la flotta (come già avviene in Fase 2, dove infatti il fenomeno non si presenta) oppure introdurre un'azione integrale nella legge di consenso.
 

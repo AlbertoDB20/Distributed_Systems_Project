@@ -27,5 +27,10 @@ Le misurazioni $z_k$ dipendono dallo stato $h(x_k)$ con aggiunta di rumore gauss
 
 Le tre matrici $C$ vengono impilate per formare un'unica matrice $C_k$ di dimensione $6 \times 5$.
 
+### 2.4 Rumore di Processo
+La matrice $Q$ non è una diagonale costante: viene ricostruita a ogni passo di predizione dalla funzione condivisa `common/calcola_Q_cwna.m` secondo il modello CWNA. Il rumore entra sulle **accelerazioni** — longitudinale, angolare e laterale — e si propaga a posizione e heading attraverso il modello, generando una $Q_d$ non diagonale e proporzionale a $T_s$. La motivazione completa, i valori dei tre canali e la validazione contro il metodo di Van Loan sono nel README principale, §2.5.
+
+Conseguenza pratica già visibile in questa fase: con $Q_{33} = q_\alpha T_s^3/3 = 3.3\cdot10^{-6}$ anziché il precedente $10^{-2}$, l'errore a regime su $\theta$ scende da 0.045 rad a circa 0.008 rad. Non è una taratura più "aggressiva": è il filtro che smette di scartare l'informazione del proprio modello di moto.
+
 ## 3. Analisi di Osservabilità
 In questa configurazione, calcolando la matrice di osservabilità $\mathcal{O} = [C_k; C_k A_k; C_k A_k^2; \dots]$, il rango è pieno (rango 5). Il sistema è completamente e globalmente osservabile grazie alla presenza simultanea del GPS per la posizione assoluta e dell'IMU per l'heading assoluto.
