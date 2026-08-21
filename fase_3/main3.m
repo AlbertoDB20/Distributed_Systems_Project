@@ -406,11 +406,18 @@ for k = 1:N_steps-1
                         z_pred   = [z_pred; d_est];
                         C_k        = [C_k; (x_pred(1)-p_j(1))/d_est, (x_pred(2)-p_j(2))/d_est, 0, 0, 0];
                         % LIMITE NOTO: R contiene solo il rumore del sensore.
-                        % L'incertezza P_j della stima del vicino e' ignorata,
-                        % quindi il filtro risulta OTTIMISTA. Correzione prevista:
-                        %   R_eff = sigma_collab^2 + u' * P_j(1:2,1:2) * u
-                        % con u versore della congiungente. Richiede che il
-                        % vicino trasmetta anche il blocco 2x2 della propria Sigma.
+                        % L'incertezza Sigma_j della stima del vicino e' ignorata,
+                        % quindi il filtro risulta OTTIMISTA.
+                        %
+                        % CORREZIONE PROGRAMMATA IN FASE 5 (README §4, punto 4):
+                        %   R_eff = sigma_collab^2 + u' * Sigma_j(1:2,1:2) * u
+                        % con u versore della congiungente. Richiede di estendere
+                        % il PACCHETTO SCAMBIATO fra veicoli: oggi contiene la sola
+                        % posizione stimata (vedi p_ancora_mobile sopra), dovra'
+                        % contenere anche il blocco 2x2 della covarianza del
+                        % mittente. Da 2 a 5 numeri, da 16 a 40 byte.
+                        % Sopra a questo si innesta la Covariance Intersection,
+                        % che affronta la correlazione ignota fra le stime.
                         R_k    = blkdiag(R_k, sigma_collab^2);
                         is_angle = [is_angle; false];
                     end
