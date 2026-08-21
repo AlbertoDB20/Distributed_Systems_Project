@@ -97,7 +97,43 @@ I blocchi 2-3 e 4-5 sono implementati come due passate distinte sull'intera flot
 
 **Ritardo di un passo sulle stime scambiate.** La posizione di un vicino usata come ancora mobile è la sua stima $\hat{x}_k^{(j)}$ — l'ultimo pacchetto ricevuto — propagata di un passo con il modello di moto, ottenendo $\hat{x}_{k+1|k}^{(j)}$. La scelta risponde a due esigenze: rompe il loop algebrico fra filtri che altrimenti dipenderebbero l'uno dalla stima aggiornata dell'altro nel medesimo istante, e rispecchia ciò che un canale di comunicazione reale rende effettivamente disponibile. La propagazione è necessaria perché confrontare una misura acquisita a $t_{k+1}$ con una posizione riferita a $t_k$ reintrodurrebbe lo stesso bias di $|v_j| T_s$ descritto sopra.
 
-### 2.5 Notazione Adottata
+### 2.5 Rumore di Processo: formulazione CWNA
+
+La matrice $Q$ non è una diagonale costante ma viene ricostruita a ogni passo di predizione secondo il modello **CWNA** (*Continuous White Noise Acceleration*). Due ragioni, entrambe sostanziali.
+
+**Struttura fisica.** Nel modello uniciclo la posizione non possiede dinamica propria: cambia soltanto perché $v$ e $\theta$ sono incerti. Una $Q$ diagonale inietta rumore direttamente su $x$ e $y$, cioè afferma che il veicolo si sposta lateralmente anche da fermo. Nel modello CWNA il rumore entra sulle **accelerazioni** — dove agisce fisicamente lo slittamento — e si propaga alla posizione attraverso il modello:
+
+$$\dot x = f(x) + \Gamma\, w(t), \qquad w \sim \mathcal{N}(0, Q_c), \qquad Q_d = \int_0^{T_s}\! e^{A\tau}\,\Gamma Q_c\Gamma^T e^{A^T\tau}\,d\tau$$
+
+Congelando $\theta$ sull'intervallo di campionamento — lecito, poiché con $T_s = 0.1$ s e $\omega \le 0.6$ rad/s l'angolo varia al più di 3.4° — l'integrale si risolve in forma chiusa e restituisce i blocchi canonici del modello a velocità costante, $q\begin{bmatrix} T_s^3/3 & T_s^2/2 \\ T_s^2/2 & T_s\end{bmatrix}$ (Bar-Shalom et al., cap. 6), proiettati sulla direzione di marcia. Il risultato **non è diagonale**: contiene le correlazioni posizione–velocità, che sono informazione fisica ("se sovrastimo la velocità, siamo anche troppo avanti") che una diagonale scarta.
+
+**Scalatura su $T_s$.** $Q_d$ è proporzionale a $T_s$. La formulazione precedente sommava una costante a ogni passo, quindi cambiare la frequenza di campionamento ri-tarava silenziosamente il filtro. È il prerequisito per il multi-rate della Fase 4.
+
+Tre canali di rumore, ciascuno con significato fisico:
+
+| Parametro | Unità | Significato | Effetto dopo 1 s di sola predizione |
+|---|---|---|---|
+| $q_a = 0.10$ | m²/s³ | accelerazione longitudinale — slittamento in trazione | $\sigma_v = 0.32$ m/s |
+| $q_\alpha = 0.01$ | rad²/s³ | accelerazione angolare — slittamento in sterzata | $\sigma_\omega = 0.10$ rad/s |
+| $q_{lat} = 0.02$ | m²/s | deriva laterale su pendio innevato | 0.14 m di scarto laterale |
+| $k_{terreno} = 0$ | 1/s | $Q$ adattiva: $q_a \leftarrow q_a + k_{terreno}v^2$ | inattiva fino alla Fase 5 |
+
+Il canale laterale non è un termine di comodo: il modello uniciclo è anolonomo e **non può** rappresentare la traslazione laterale, quindi senza di esso $Q_d$ risulta **singolare** (rango 4 su 5) e l'incertezza perpendicolare alla direzione di marcia non cresce mai, per quanto a lungo il filtro resti privo di misure assolute. Rappresenta esattamente ciò che il modello non sa descrivere, ed è il primo candidato a essere sostituito da un modello esplicito in Fase 5.
+
+**Validazione.** La forma chiusa è verificata numericamente contro la discretizzazione esatta ottenuta con il metodo di **Van Loan** (`common/verifica_Q_cwna.m`): a $T_s = 0.1$ s l'errore relativo è di $4\cdot10^{-4}$, e cresce come $T_s^2$ (a $T_s = 1$ s raggiunge l'11%). Se in Fase 4 un ramo di predizione dovesse operare a passi molto più lunghi, converrà passare direttamente a Van Loan.
+
+**Effetto misurato** (Fase 2, 15 run Monte Carlo, regime):
+
+| | NEES | RMSE posizione | RMSE $v$ | RMSE $\theta$ |
+|---|---|---|---|---|
+| $Q$ diagonale costante | 3.95 | 0.376 m | 0.0350 m/s | 0.0420 rad |
+| $Q$ in forma CWNA | 4.03 | **0.200 m** | 0.0318 m/s | **0.0082 rad** |
+
+La **consistenza non cambia** — entrambe le formulazioni sono ugualmente calibrate, conservative di circa 1.25× rispetto al valore atteso $E[\text{NEES}] = n = 5$ — mentre l'**accuratezza migliora di 1.9× in posizione e 5.1× in heading**. È il risultato atteso: il NEES misura il *rapporto* fra errore reale e covarianza dichiarata, e una $Q$ sovradimensionata gonfia entrambi lasciando il rapporto invariato. Ciò che il CWNA corregge non è la calibrazione ma la quantità di informazione che il modello di processo mette a disposizione del filtro.
+
+> **Avvertenza di taratura, da dichiarare nel report.** La ground truth attuale ha rumore di processo *nullo* (tracking ideale degli attuatori). I valori di $q_a$ e $q_\alpha$ sono quindi deliberatamente conservativi rispetto all'impianto simulato — il filtro risulta pessimista, non ottimista, che è la condizione sicura — e parte del guadagno di accuratezza misurato deriva dal fatto che una $Q$ più piccola è più vicina a un impianto che di rumore non ne ha affatto. La calibrazione onesta sarà possibile solo in Fase 5, contro uno slittamento realmente simulato. I benefici *strutturali* — scalatura su $T_s$, correlazioni posizione-velocità, non singolarità, parametrizzazione fisica — sono invece incondizionati.
+
+### 2.6 Notazione Adottata
 
 Si adotta integralmente la notazione di Thrun, Burgard e Fox, *Probabilistic Robotics*, mantenuta identica in tutte le fasi del progetto e nel codice MATLAB.
 
