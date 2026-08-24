@@ -107,7 +107,7 @@ x_true = zeros(5, N_steps);
 % Condizioni iniziali
 x_true(:,1) = [0; 0; 0; 0; 0]; 
 
-% Generiamo comandi di V e W fittizi per fare un percorso a "8"
+% Generiamo comandi di V e W fittizi per fare un percorso sinusoidale
 v_cmd = 3 * ones(1, N_steps); % Velocità costante a 3 m/s
 w_cmd = 0.5 * sin(2*pi*0.05*t); % Sterzata sinusoidale
 
@@ -211,16 +211,24 @@ for k = 1:N_steps-1
     Sigma = (eye(5) - K * C_k) * Sigma_bar;
 end
 
-%% 7. PLOT RISULTATI
-figure('Name','Traiettoria (Ground Truth vs Stima)','Color','w');
+%% 7. PLOT E SALVATAGGIO RISULTATI
+
+cartella_output = fullfile('fase_1', 'risultati'); % Cartella 'risultati' nella directory corrente
+if ~exist(cartella_output, 'dir')
+    mkdir(cartella_output); % Crea la cartella se non esiste
+end
+
+fig1 = figure('Name','Traiettoria (Ground Truth vs Stima)','Color','w');
 hold on; grid on; axis equal;
 plot(x_true(1,:), x_true(2,:), 'k--', 'LineWidth', 2, 'DisplayName', 'Ground Truth');
 plot(z_history(1,:), z_history(2,:), 'r.', 'MarkerSize', 5, 'DisplayName', 'Misure GPS');
 plot(x_est(1,:), x_est(2,:), 'b-', 'LineWidth', 2, 'DisplayName', 'Stima EKF');
 xlabel('X [m]'); ylabel('Y [m]'); title('Fase 1: Localizzazione EKF Veicolo Singolo');
 legend('Location','best');
+percorso_fig1 = fullfile(cartella_output, 'fase1_traiettoria.png');
+exportgraphics(fig1, percorso_fig1, 'Resolution', 300);
 
-figure('Name','Errori di Stima nel Tempo','Color','w');
+fig2 = figure('Name','Errori di Stima nel Tempo','Color','w');
 subplot(3,1,1);
 plot(t, x_true(1,:) - x_est(1,:), 'b'); title('Errore Posizione X'); ylabel('[m]'); grid on;
 subplot(3,1,2);
@@ -228,3 +236,5 @@ plot(t, x_true(2,:) - x_est(2,:), 'r'); title('Errore Posizione Y'); ylabel('[m]
 subplot(3,1,3);
 err_th = wrapToPi(x_true(3,:) - x_est(3,:));
 plot(t, rad2deg(err_th), 'k'); title('Errore Heading \theta'); ylabel('[deg]'); xlabel('Tempo [s]'); grid on;
+percorso_fig2 = fullfile(cartella_output, 'fase1_errori.png');
+exportgraphics(fig2, percorso_fig2, 'Resolution', 300);
