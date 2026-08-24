@@ -36,7 +36,9 @@ addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'common'));
 
 %% 1. CARICAMENTO AMBIENTE
 try
-    load('ambiente_fase3.mat');
+    % Percorso ancorato alla posizione dello script, non alla directory
+    % corrente: funziona sia lanciando il file dall'IDE sia dalla radice.
+    load(fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase3.mat'));
     disp('Ambiente caricato con successo.');
 catch
     error('File ambiente_fase3.mat non trovato. Esegui prima lo script di generazione.');
@@ -62,7 +64,7 @@ t = 0:Ts:t_end;
 N_steps = length(t);
 N_veh = 3;             % 1 Master, 2 Slaves
 
-%% 3. PARAMETRI RUMORE SENSORI
+%% 3. PARAMETRI DEL FILTRO E DEI SENSORI
 % -------------------------------------------------------------------------
 % RUMORE DI PROCESSO — modello CWNA (Continuous White Noise Acceleration)
 %
@@ -140,7 +142,7 @@ sigma_collab = 0.6;   % [m] INTER-VEICOLARE: peggiore, ma non per il moto.
 % 120 m e' compatibile con un link UWB in vista ottica su neve aperta.
 r_collab = 120;  % [m]
 
-%% 4. PARAMETRI FORMAZIONE
+%% 4. PARAMETRI CONTROLLO DI FORMAZIONE
 % Formazione a "V" su fronte ampio, coerente con l'impiego reale dei mezzi
 % battipista. Distanze reciproche: d12 = d13 = 36.1 m, d23 = 40.0 m.
 % E' anche un requisito funzionale: con una formazione di pochi metri i tre
@@ -151,6 +153,24 @@ pos_des = [  0.0,  20.0;  % V1 (Master), in testa
            -20.0, -10.0;  % V2, ala sinistra
             20.0, -10.0]; % V3, ala destra
 Delta = zeros(2, N_veh, N_veh);
+
+% Preallocate fleet struct array to avoid dynamic resizing in the loop
+empty_fleet = struct( ...
+    'x_true', zeros(5, N_steps), ...
+    'x_est',  zeros(5, N_steps), ...
+    'Sigma',  diag([2, 2, 0.1, 1, 1]), ...
+    'u_hist', zeros(2, N_steps), ...
+    'in_denied_hist', false(1, N_steps), ...
+    'Sigma_hist', zeros(5,5,N_steps), ...
+    'F_cons_hist', zeros(2, N_steps), ...  % sforzo di consenso, per il grafico 4
+    'F_rep_hist',  zeros(2, N_steps), ...  % forza repulsiva, per il grafico 4
+    'n_uwb_hist',    zeros(1, N_steps), ...% n. ancore fisse viste a ogni passo
+    'n_collab_hist', zeros(1, N_steps), ...% n. vicini usati come ancora mobile
+    'R_gps', [], ...
+    'target_idx', 0 ...
+    );
+fleet = repmat(empty_fleet, N_veh, 1);
+
 for i = 1:N_veh
     for j = 1:N_veh
         Delta(:, i, j) = pos_des(i,:)' - pos_des(j,:)';
@@ -303,6 +323,9 @@ for k = 1:N_steps-1
             end
         end
 
+        fleet(i).F_cons_hist(:, k) = u_cons;
+        fleet(i).F_rep_hist(:, k)  = F_rep;
+
         p_dot_cmd = V_rif_i + u_cons + F_rep;
 
         % Feedback linearization valutata sulla STIMA a t_k
@@ -375,6 +398,14 @@ for k = 1:N_steps-1
             R_k    = blkdiag(R_k, fleet(i).R_gps);
             is_angle = [is_angle; false; false];
         else
+            % Contatori dei riferimenti effettivamente sfruttati a questo passo.
+            % Servono al grafico 5: spiegano l'andamento della covarianza
+            % distinguendo i riferimenti ASSOLUTI (ancore fisse, che ancorano la
+            % posizione nel riferimento mappa) da quelli RELATIVI (vicini, che
+            % vincolano solo la geometria della formazione).
+            n_uwb_k    = 0;
+            n_collab_k = 0;
+
             % --- GPS negato: ranging UWB verso le ancore FISSE ---
             for a_idx = 1:size(uwb_opt, 1)
                 p_anc  = uwb_opt(a_idx, :)';
@@ -387,6 +418,7 @@ for k = 1:N_steps-1
                     C_k        = [C_k; (x_pred(1)-p_anc(1))/d_est, (x_pred(2)-p_anc(2))/d_est, 0, 0, 0];
                     R_k    = blkdiag(R_k, sigma_uwb^2);
                     is_angle = [is_angle; false];
+                    n_uwb_k  = n_uwb_k + 1;
                 end
             end
 
@@ -420,9 +452,13 @@ for k = 1:N_steps-1
                         % che affronta la correlazione ignota fra le stime.
                         R_k    = blkdiag(R_k, sigma_collab^2);
                         is_angle = [is_angle; false];
+                        n_collab_k = n_collab_k + 1;
                     end
                 end
             end
+
+            fleet(i).n_uwb_hist(k+1)    = n_uwb_k;
+            fleet(i).n_collab_hist(k+1) = n_collab_k;
         end
 
         % (5) Aggiornamento
@@ -448,11 +484,27 @@ if N_end == N_steps
 end
 disp('Simulazione completata.');
 
-%% 7. PLOT RISULTATI
-figure('Name', 'Fase 3: Navigazione e Sensor Fusion', 'Color', 'w', 'Position', [100 100 800 800]);
+%% 7. PLOT E SALVATAGGIO RISULTATI
+% Il percorso e' ancorato alla posizione dello SCRIPT, non alla directory
+% corrente: le figure finiscono sempre in fase_3/risultati/ sia lanciando il
+% file dall'IDE (cwd = fase_3) sia dalla radice del progetto.
+cartella_fase   = fileparts(mfilename('fullpath'));
+cartella_output = fullfile(cartella_fase, 'risultati');
+if ~exist(cartella_output, 'dir'), mkdir(cartella_output); end
+
+colors  = ['b', 'r', 'g'];
+t_plot  = t(1:N_end);
+
+% Intervalli GPS-denied del Master, usati come sfondo nei grafici temporali.
+% Ombreggiare le fasce di oscuramento e' cio' che rende leggibili i grafici di
+% questa fase: senza, l'andamento della covarianza sembra casuale.
+mask_denied = fleet(1).in_denied_hist(1:N_end);
+
+% FIGURA 1: mappa di navigazione
+fig1 = figure('Name', 'Fase 3: Navigazione e Sensor Fusion', 'Color', 'w', 'Position', [100 100 800 800]);
 hold on; grid on; axis equal; axis([0 W_MAP 0 H_MAP]);
 
-% Disegna Zone GPS-Denied
+% Zone GPS-denied
 for z_idx = 1:length(gps_denied_zones)
     th_c = linspace(0, 2*pi, 100);
     x_c = gps_denied_zones(z_idx).xc + gps_denied_zones(z_idx).raggio * cos(th_c);
@@ -460,32 +512,158 @@ for z_idx = 1:length(gps_denied_zones)
     patch(x_c, y_c, 'r', 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 end
 
-% Disegna Percorso
 plot(path_points(:,1), path_points(:,2), 'k--', 'LineWidth', 1, 'DisplayName', 'Path Nominale');
 
-% Disegna Ancore UWB
 if ~isempty(uwb_opt)
     plot(uwb_opt(:,1), uwb_opt(:,2), 'b^', 'MarkerFaceColor', 'b', 'MarkerSize', 8, 'DisplayName', 'Ancore UWB');
 end
 
-% Disegna Traiettorie Veicoli
-colors = ['b', 'r', 'g'];
 % N_end e' l'ultimo campione valido, restituito dal loop alla fine del percorso.
-% Sostituisce la ricerca euristica del primo zero in x_true, che confondeva un
-% campione non simulato con un veicolo realmente transitato per x = 0.
 for i = 1:N_veh
     plot(fleet(i).x_true(1, 1:N_end), fleet(i).x_true(2, 1:N_end), [colors(i) '-'], 'LineWidth', 1.5, 'DisplayName', sprintf('True V%d', i));
     plot(fleet(i).x_est(1, 1:N_end),  fleet(i).x_est(2, 1:N_end),  [colors(i) ':'], 'LineWidth', 1.5, 'DisplayName', sprintf('Est V%d', i));
+    plot(fleet(i).x_true(1, N_end), fleet(i).x_true(2, N_end), [colors(i) 'o'], 'MarkerFaceColor', colors(i), 'HandleVisibility', 'off');
+end
+title('Fase 3: Navigazione in Zone GPS-Denied'); xlabel('X [m]'); ylabel('Y [m]'); legend('Location', 'best');
+exportgraphics(fig1, fullfile(cartella_output, '1_mappa_navigazione.png'), 'Resolution', 300);
 
-    % Marker finale
-    plot(fleet(i).x_true(1, N_end), fleet(i).x_true(2, N_end), [colors(i) 'o'], 'MarkerFaceColor', colors(i));
+% FIGURA 2: errore assoluto di posizione 2D 
+fig2 = figure('Name','Errore Assoluto di Posizione 2D','Color','w');
+for i = 1:N_veh
+    subplot(3, 1, i);
+    err_x   = fleet(i).x_true(1,1:N_end) - fleet(i).x_est(1,1:N_end);
+    err_y   = fleet(i).x_true(2,1:N_end) - fleet(i).x_est(2,1:N_end);
+    err_pos = sqrt(err_x.^2 + err_y.^2);        % norma dell'errore sul piano [m]
+
+    ombreggia_denied(t_plot, fleet(i).in_denied_hist(1:N_end), [0, max(err_pos)*1.1]);
+    plot(t_plot, err_pos, colors(i), 'LineWidth', 1.2); grid on;
+    title(sprintf('V%d: Errore di Posizione Scalare ||e_{pos}||', i));
+    ylabel('Errore [m]');
+end
+xlabel('Tempo [s]');
+exportgraphics(fig2, fullfile(cartella_output, '2_errore_posizione_2d.png'), 'Resolution', 300);
+
+% FIGURA 3: diagnostica EKF (errori X, Y, theta)
+fig3 = figure('Name','Diagnostica EKF: Errore di Stima','Color','w', 'Position', [100, 100, 1000, 600]);
+for i = 1:N_veh
+    err_x  = fleet(i).x_true(1,1:N_end) - fleet(i).x_est(1,1:N_end);
+    err_y  = fleet(i).x_true(2,1:N_end) - fleet(i).x_est(2,1:N_end);
+    err_th = wrapToPi(fleet(i).x_true(3,1:N_end) - fleet(i).x_est(3,1:N_end));
+
+    subplot(3, N_veh, i);
+    plot(t_plot, err_x, colors(i), 'LineWidth', 1); grid on; hold on;
+    yline(0, 'k--', 'LineWidth', 1.5);
+    title(sprintf('V%d: Errore X', i));  if i==1; ylabel('[m]'); end
+
+    subplot(3, N_veh, i + N_veh);
+    plot(t_plot, err_y, colors(i), 'LineWidth', 1); grid on; hold on;
+    yline(0, 'k--', 'LineWidth', 1.5);
+    title(sprintf('V%d: Errore Y', i));  if i==1; ylabel('[m]'); end
+
+    subplot(3, N_veh, i + 2*N_veh);
+    plot(t_plot, err_th, colors(i), 'LineWidth', 1); grid on; hold on;
+    yline(0, 'k--', 'LineWidth', 1.5);
+    title(sprintf('V%d: Errore \\theta', i));
+    xlabel('Tempo [s]');  if i==1; ylabel('[rad]'); end
+end
+exportgraphics(fig3, fullfile(cartella_output, '3_diagnostica_ekf.png'), 'Resolution', 300);
+
+% FIGURA 4: forze virtuali (consenso e repulsione)
+fig4 = figure('Name','Analisi delle Forze Virtuali nel Tempo','Color','w', 'Position', [150, 150, 1000, 500]);
+for i = 1:N_veh
+    mag_F_cons = vecnorm(fleet(i).F_cons_hist(:, 1:N_end));
+    mag_F_rep  = vecnorm(fleet(i).F_rep_hist(:,  1:N_end));
+
+    subplot(2, N_veh, i);
+    plot(t_plot, mag_F_cons, colors(i), 'LineWidth', 1.5); grid on;
+    title(sprintf('V%d: Sforzo Consenso (|F_{cons}|)', i));
+    xlabel('Tempo [s]');  if i==1; ylabel('Magnitudo [m/s]'); end
+    ylim([0, max(0.1, max(mag_F_cons)*1.2)]);
+
+    subplot(2, N_veh, i + N_veh);
+    plot(t_plot, mag_F_rep, 'k', 'LineWidth', 1.5); grid on;
+    title(sprintf('V%d: Forza Repulsiva (|F_{rep}|)', i));
+    xlabel('Tempo [s]');  if i==1; ylabel('Magnitudo [m/s]'); end
+    ylim([0, max(0.1, max(mag_F_rep)*1.2)]);
+end
+exportgraphics(fig4, fullfile(cartella_output, '4_forze_virtuali.png'), 'Resolution', 300);
+
+% FIGURA 5: copertura sensoriale e covarianza
+% Grafico specifico di questa fase, ed e' quello che ne dimostra la tesi: la
+% covarianza di posizione cresce quando mancano riferimenti ASSOLUTI e viene
+% riportata giu' non appena il GPS torna o entrano in vista le ancore UWB.
+% Il pannello superiore rende leggibile quello inferiore.
+fig5 = figure('Name','Copertura Sensoriale e Covarianza','Color','w', 'Position', [100, 100, 1000, 700]);
+
+subplot(2,1,1); hold on; grid on;
+for i = 1:N_veh
+    % Riferimenti ASSOLUTI disponibili: 1 se il GPS e' attivo, altrimenti il
+    % numero di ancore UWB fisse in vista.
+    n_ass = double(~fleet(i).in_denied_hist(1:N_end)) + fleet(i).n_uwb_hist(1:N_end);
+    plot(t_plot, n_ass, colors(i), 'LineWidth', 1.2, 'DisplayName', sprintf('V%d', i));
+end
+ylabel('N. riferimenti assoluti'); title('Riferimenti assoluti disponibili (GPS oppure ancore UWB in vista)');
+legend('Location','best'); ylim([-0.2, max(2, size(uwb_opt,1)) + 0.5]);
+
+% Asse LOGARITMICO: la traccia spans tre decadi fra il transitorio iniziale
+% (~4 m^2) e il regime con GPS attivo (~5e-3 m^2). Su scala lineare il
+% transitorio schiaccerebbe tutto il resto rendendo il grafico illeggibile.
+subplot(2,1,2); hold on; grid on; set(gca, 'YScale', 'log');
+tr = zeros(N_veh, N_end);
+for i = 1:N_veh
+    tr(i,:) = squeeze(fleet(i).Sigma_hist(1,1,1:N_end) + fleet(i).Sigma_hist(2,2,1:N_end))';
+end
+lim_lo = 10^floor(log10(min(tr(:))));
+lim_hi = 10^ceil(log10(max(tr(:))));
+ombreggia_denied(t_plot, mask_denied, [lim_lo, lim_hi]);
+for i = 1:N_veh
+    plot(t_plot, tr(i,:), colors(i), 'LineWidth', 1.2, 'DisplayName', sprintf('V%d', i));
+end
+xlabel('Tempo [s]'); ylabel('tr(\Sigma_{pos})  [m^2]');
+title('Traccia del blocco posizione della covarianza (sfondo: Master in zona GPS-denied)');
+legend('Location','best');
+exportgraphics(fig5, fullfile(cartella_output, '5_copertura_e_covarianza.png'), 'Resolution', 300);
+
+% FIGURA 6: consistenza, errore contro bound a 3 sigma
+% Verifica che la covarianza DICHIARATA dal filtro contenga l'errore
+% effettivamente commesso. E' l'anticipazione della validazione di Fase 6:
+% qui su singolo run e a scopo diagnostico, li' su campagna Monte Carlo.
+fig6 = figure('Name','Consistenza: errore e bound 3-sigma','Color','w', 'Position', [100, 100, 1000, 600]);
+etichette = {'X [m]', 'Y [m]', '\theta [rad]'};
+k0 = min(round(10/Ts), N_end);   % il transitorio iniziale e' escluso dal solo
+                                 % calcolo dei limiti d'asse, non dai dati
+for c = 1:3
+    lim_c = 0;
+    for i = 1:N_veh
+        s3 = 3 * sqrt(squeeze(fleet(i).Sigma_hist(c,c,k0:N_end)))';
+        e  = fleet(i).x_true(c,k0:N_end) - fleet(i).x_est(c,k0:N_end);
+        if c == 3, e = wrapToPi(e); end
+        lim_c = max([lim_c, max(s3), max(abs(e))]);
+    end
+    lim_asse(c) = lim_c * 1.2; %#ok<SAGROW>
 end
 
-title('Fase 3: Navigazione in Zone GPS-Denied'); xlabel('X [m]'); ylabel('Y [m]'); legend('Location', 'best');
+for i = 1:N_veh
+    for c = 1:3
+        subplot(3, N_veh, (c-1)*N_veh + i); hold on; grid on;
+        e = fleet(i).x_true(c,1:N_end) - fleet(i).x_est(c,1:N_end);
+        if c == 3, e = wrapToPi(e); end
+        s3 = 3 * sqrt(squeeze(fleet(i).Sigma_hist(c,c,1:N_end)))';
 
-%% ========================================================================
-% FUNZIONI LOCALI EKF
-% =========================================================================
+        fill([t_plot, fliplr(t_plot)], [s3, fliplr(-s3)], [0.85 0.85 0.85], ...
+             'EdgeColor', 'none', 'HandleVisibility', 'off');
+        plot(t_plot, e, colors(i), 'LineWidth', 0.8);
+        ylim([-lim_asse(c), lim_asse(c)]);
+        fuori = 100 * mean(abs(e) > s3);
+        title(sprintf('V%d: %s  (fuori 3\\sigma: %.1f%%)', i, etichette{c}, fuori));
+        if c == 3, xlabel('Tempo [s]'); end
+    end
+end
+exportgraphics(fig6, fullfile(cartella_output, '6_bound_3sigma.png'), 'Resolution', 300);
+
+fprintf('Figure salvate in %s\n', cartella_output);
+
+%% FUNZIONI LOCALI EKF
 
 function [x_pred, Sigma_bar] = ekf_predict(x_old, Sigma_old, Ts, par_Q)
     v_est = x_old(4); th_est = x_old(3); w_est = x_old(5);
@@ -524,4 +702,20 @@ function [x_new, Sigma_new] = ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R, i
     x_new(3) = wrapToPi(x_new(3));
 
     Sigma_new = (eye(5) - K * C_k) * Sigma_bar;
+end
+
+function ombreggia_denied(t, mask, y_lim)
+    % Disegna in grigio le fasce temporali in cui il veicolo e' privo di GPS.
+    % y_lim = [y_min, y_max] esplicito: la patch deve coprire tutta l'altezza
+    % dell'asse, e con asse logaritmico y_min deve essere strettamente positivo.
+    % Va chiamata PRIMA dei plot dei dati, cosi' le patch restano sullo sfondo.
+    d      = diff([false, logical(mask(:)'), false]);
+    inizio = find(d ==  1);
+    fine   = find(d == -1) - 1;
+    for b = 1:numel(inizio)
+        x1 = t(inizio(b)); x2 = t(fine(b));
+        patch([x1 x2 x2 x1], [y_lim(1) y_lim(1) y_lim(2) y_lim(2)], [0.9 0.9 0.9], ...
+              'EdgeColor', 'none', 'HandleVisibility', 'off');
+    end
+    ylim(y_lim);
 end

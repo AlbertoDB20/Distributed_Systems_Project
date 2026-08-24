@@ -88,31 +88,43 @@ Tre letture meritano di essere riportate.
 **d) Errore di inseguimento a regime della formazione.** Le distanze $d_{12}$ e $d_{13}$ si assestano a circa 39.9 m contro un target di 36.1 m, mentre $d_{23}$ resta esatta (40.0 m). Non è rumore: è l'errore a regime di un controllo puramente proporzionale che insegue un riferimento in movimento. Solo il Master riceve il termine di velocità $V_{rif}$ del path following; gli Slave si muovono unicamente per effetto del consenso, e devono quindi mantenere un errore di formazione non nullo per generare la velocità necessaria a stare al passo. L'errore è di modo comune lungo la direzione del moto, ed è per questo che la distanza fra i due Slave — simmetrici rispetto al Master — resta corretta. La correzione naturale è un termine di feedforward: propagare $V_{rif}$ a tutta la flotta (come già avviene in Fase 2, dove infatti il fenomeno non si presenta) oppure introdurre un'azione integrale nella legge di consenso.
 
 
-# Spiegazione chiara:
+## 4. Figure Prodotte
 
-## Cosa significano le linee nel grafico?
+L'esecuzione di `main3.m` genera la cartella `fase_3/risultati/` con sei figure. Le prime quattro replicano quelle di Fase 2, con nomenclatura coerente; le ultime due sono specifiche di questa fase.
 
-- Tratteggiata Nera (k--): È il percorso nominale, la "rotaia invisibile" che il Master deve seguire.
+| File | Contenuto |
+|---|---|
+| `1_mappa_navigazione.png` | mappa completa: percorso nominale, zone GPS-denied, ancore UWB, traiettorie reali e stimate |
+| `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert$, con le fasce GPS-denied ombreggiate |
+| `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ |
+| `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione |
+| `5_copertura_e_covarianza.png` | riferimenti assoluti disponibili e traccia di $\Sigma_{pos}$ nel tempo |
+| `6_bound_3sigma.png` | errore di stima confrontato con l'inviluppo a $\pm 3\sigma$ dichiarato dal filtro |
 
-- Linea Continua Colorata (True): Rappresenta la posizione reale del veicolo (Ground Truth). È dove il robot si trova effettivamente nel mondo fisico.
+### 4.1 Lettura della mappa (figura 1)
+- **Tratteggio nero**: percorso nominale, inseguito dal solo Master.
+- **Linea continua colorata**: posizione reale del veicolo (ground truth).
+- **Linea punteggiata colorata**: posizione stimata dall'EKF. La sovrapposizione fra le due misura la qualità della localizzazione.
+- **Triangoli blu**: ancore UWB fisse, collocate per minimizzazione della GDOP.
+- **Aree rosse**: zone di oscuramento del segnale GPS.
 
-- Linea Punteggiata Colorata (Est): Rappresenta la posizione stimata dall'EKF. È dove il robot pensa di essere. Più la linea punteggiata è sovrapposta a quella continua, migliore è il sistema di localizzazione. Nelle zone rosse, potresti notare che la linea punteggiata si discosta leggermente da quella reale per poi correggersi: è l'effetto della perdita del GPS e della correzione UWB/Collaborativa.
+### 4.2 Copertura sensoriale e covarianza (figura 5)
+È la figura che sintetizza il risultato della fase. Il pannello superiore riporta il numero di **riferimenti assoluti** disponibili a ogni istante: vale 1 quando il GPS è attivo, e sale al numero di ancore UWB in vista quando il GPS è negato. Il pannello inferiore riporta $\text{tr}(\Sigma_{pos}) = \Sigma_{11} + \Sigma_{22}$, in scala logaritmica perché la grandezza copre tre decadi fra il transitorio iniziale e il regime.
 
-- Triangoli Blu: Le ancore UWB fisse.
+I riferimenti sono distinti in **assoluti** (GPS e ancore fisse, che vincolano la posizione nel riferimento mappa) e **relativi** (vicini, che vincolano soltanto la geometria della formazione). La distinzione non è formale: come mostrato in [TEORIA_osservabilita_e_filtro.md](../theory/TEORIA_osservabilita_e_filtro.md) §1.4, Caso D, il ranging inter-veicolare da solo lascia non osservabile la traslazione comune della flotta.
 
-- Zone Rosse: Le aree in cui viene simulato l'oscuramento del segnale GPS.
+Valori medi di $\text{tr}(\Sigma_{pos})$ misurati (seed 7, transitorio escluso):
 
+| Veicolo | con GPS | in zona GPS-denied | rapporto |
+|---|---|---|---|
+| V1 (Master, GPS RTK) | 0.0089 m² | 0.0130 m² | 1.5× peggiore |
+| V2 (Slave, GPS standard) | 0.0968 m² | 0.0132 m² | **7.3× migliore** |
+| V3 (Slave, GPS standard) | 0.0977 m² | 0.0134 m² | **7.3× migliore** |
 
-## Come funziona l'algoritmo?
+Il Master, che dispone di GPS RTK, subisce un lieve peggioramento entrando in zona cieca. Gli Slave, che montano GPS standard, registrano invece un **miglioramento di oltre sette volte**: con cinque ancore ben distribuite il ranging UWB a $\sigma = 0.5$ m porta più informazione di un GPS a $\sigma = 2.0$ m. È la quantificazione, sul piano della covarianza, del risultato già riportato al §3.3 in termini di errore.
 
-L'algoritmo gira in un loop continuo. Ad ogni istante di tempo (ogni tick del simulatore), esegue questi tre passaggi per ogni veicolo:
+### 4.3 Consistenza (figura 6)
+Confronto fra l'errore di stima effettivo e l'inviluppo $\pm 3\sigma$ estratto da `Sigma_hist`. La frazione di campioni fuori banda risulta compresa fra 0.0% e 0.3% contro un valore atteso di 0.3% per un filtro esattamente calibrato: il filtro è consistente e leggermente conservativo. La verifica è condotta su singolo run a scopo diagnostico; la validazione statistica con campagna Monte Carlo e test NEES è prevista in Fase 6.
 
-1) **Fase A: Misurazione e Predizione (EKF)**: Il robot legge i propri encoder (ruote) e l'IMU (bussola/giroscopio). Con questi dati, fa una predizione cieca: "Ero al punto A, ho girato le ruote a questa velocità, quindi ora dovrei essere al punto B". Questa predizione si accumula di errori (deriva) col tempo.
-
-2) **Fase B: Sensor Fusion e Localizzazione Collaborativa (L'Aggiornamento)**: Qui entra in gioco l'intelligenza del sistema. Il robot guarda la mappa e si chiede: "Vedo i satelliti GPS?".
-    - Se SÌ (fuori dalle zone rosse): Usa il GPS per correggere la sua predizione. Il GPS è rumoroso, ma non deriva nel tempo.
-    - Se NO (dentro le zone rosse): Il robot passa in modalità emergenza. Cerca i triangoli blu (Ancore UWB) entro il suo raggio visivo e misura la distanza da loro. Se non ne trova abbastanza, guarda i suoi "colleghi" (gli altri veicoli) e usa il radar/radio per misurare la distanza da loro. Sfrutta le posizioni stimate dei colleghi come se fossero ancore mobili. Questa si chiama localizzazione collaborativa.
-
-3) **Fase C: Controllo e Consenso (Il Movimento)**: Ora che ogni robot sa dove si trova, deve decidere come muoversi:
-    - Il Master calcola la direzione verso il prossimo punto del percorso nero tratteggiato.
-    - Gli Slave calcolano la loro distanza dal Master. Se sono troppo lontani dalla loro posizione desiderata a triangolo, accelerano. Se si avvicinano troppo a un compagno, scatta una forza "repulsiva" matematica che li allontana per evitare lo scontro.
+### 4.4 Nota sulla figura 4
+In questa fase la formazione viene inizializzata già nella configurazione desiderata, quindi non esiste il transitorio di riavvicinamento presente in Fase 2. Di conseguenza la forza repulsiva risulta **identicamente nulla** per l'intera missione, e lo sforzo di consenso si mantiene pressoché costante. Il valore non nullo a regime (1.67 m/s per il Master, 0.83 m/s per gli Slave) corrisponde all'errore di inseguimento descritto al §3.3, punto d.

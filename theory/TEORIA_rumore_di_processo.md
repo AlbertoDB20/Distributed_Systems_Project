@@ -59,7 +59,7 @@ Ed è un problema bloccante per la Fase 4, che è multi-rate per definizione.
 
 ### Errore B — la struttura diagonale afferma una cosa falsa
 
-Una $Q$ diagonale dichiara: *gli errori sulle cinque componenti di stato crescono in modo indipendente*. Ma guarda il modello:
+Una $Q$ diagonale dichiara che *gli errori sulle cinque componenti di stato crescono in modo indipendente*. Il modello, però, afferma il contrario:
 
 $$x_{k+1} = x_k + v_k\cos(\theta_k)\,T_s$$
 
@@ -156,7 +156,7 @@ Q_d(5,5) = par.q_alpha * T1;   % varianza su omega
 
 ## 6. Il canale laterale: perché serve davvero
 
-Qui c'è la parte più sottile, e vale la pena capirla bene perché è il tipo di dettaglio su cui un esaminatore si ferma.
+È l'aspetto più sottile della formulazione, e quello meno evidente a una prima lettura.
 
 Con i due soli canali visti sopra, **$Q_d$ è singolare**. Perché?
 
@@ -273,25 +273,25 @@ Se all'esame arriva la domanda *"quindi la $Q$ vecchia era inconsistente?"* — 
 
 ---
 
-## 11. Domande probabili all'orale
+## 11. Chiarimenti su punti ricorrenti
 
-**"Perché $Q$ non è diagonale?"**
+**Perché $Q$ non è diagonale?**
 Perché nel modello uniciclo la posizione non ha dinamica propria: cambia solo attraverso $v$ e $\theta$. Un'unica accelerazione ignota produce simultaneamente un errore di velocità e uno di posizione, legati fra loro. La correlazione vale $\sqrt3/2 \approx 0.87$; una diagonale afferma che sia zero.
 
-**"Perché $Q$ dipende da $\theta$?"**
+**Perché $Q$ dipende da $\theta$?**
 Perché l'incertezza è un'ellisse allungata lungo la direzione di marcia, e ruota con il veicolo. La velocità è diretta lungo l'heading, quindi l'incertezza che genera si proietta su $x$ e $y$ tramite $\cos\theta$ e $\sin\theta$.
 
-**"Perché $T_s^3/3$ e non $T_s^4/4$?"**
-Perché $T_s^4/4$ è il risultato del modello **DWNA** (*Discrete White Noise Acceleration*), che assume un'accelerazione casuale **costante** entro ciascun intervallo. Il CWNA assume rumore bianco **continuo**, e integrando propriamente si ottiene $T_s^3/3$. Cambiano anche le unità: $\sigma_a^2$ è in m²/s⁴ nel DWNA, $q$ è in m²/s³ nel CWNA. Il CWNA è preferibile qui perché la frequenza di campionamento è una scelta dell'estimatore, non una proprietà fisica del disturbo — e in Fase 4 quella frequenza cambierà.
+**Perché $T_s^3/3$ e non $T_s^4/4$?**
+Perché $T_s^4/4$ è il risultato del modello **DWNA** (*Discrete White Noise Acceleration*), che assume un'accelerazione casuale **costante** entro ciascun intervallo. Il CWNA assume rumore bianco **continuo**, e integrando propriamente si ottiene $T_s^3/3$. Cambiano anche le unità: $\sigma_a^2$ è in m²/s⁴ nel DWNA, $q$ è in m²/s³ nel CWNA. Il CWNA è preferibile in questo contesto perché la frequenza di campionamento è una scelta dell'estimatore e non una proprietà fisica del disturbo; in Fase 4 tale frequenza cambierà.
 
-**"Cosa succede se sbaglio $Q$?"**
-Troppo grande: il filtro diffida del proprio modello, si appoggia a sensori rumorosi, stima nervosa e informazione sprecata. Troppo piccola: si fida troppo del modello, ignora le misure, deriva e nei casi estremi diverge. Con $Q = 0$ esattamente, $\Sigma \to 0$, $K \to 0$ e il filtro diventa sordo.
+**Quali sono le conseguenze di una $Q$ mal tarata?**
+Se è troppo grande, il filtro diffida del proprio modello, si appoggia eccessivamente a sensori rumorosi e produce una stima rumorosa, sprecando informazione. Se è troppo piccola, si fida eccessivamente del modello, ignora le misure e va in deriva, fino a divergere nei casi estremi. Con $Q = 0$ esattamente si ha $\Sigma \to 0$, quindi $K \to 0$: il filtro cessa di recepire le misure.
 
-**"A cosa serve il canale laterale?"**
+**Qual è la funzione del canale laterale?**
 A rappresentare ciò che il modello non sa rappresentare. L'uniciclo è anolonomo e non prevede traslazione laterale, quindi senza quel canale $Q_d$ ha rango 4 su 5 e l'incertezza perpendicolare alla marcia non cresce mai. È anche il primo candidato a essere sostituito da un modello esplicito di slittamento in Fase 5.
 
-**"Come hai verificato che la formula sia giusta?"**
-Contro il metodo di Van Loan, che dà la discretizzazione esatta senza congelare $\theta$. A $T_s = 0.1$ s l'errore relativo è $4\cdot10^{-4}$ e cresce come $T_s^2$.
+**Come è stata verificata la correttezza della formula?**
+Mediante confronto con il metodo di Van Loan, che fornisce la discretizzazione esatta senza congelare $\theta$. A $T_s = 0.1$ s l'errore relativo è $4\cdot10^{-4}$, e cresce come $T_s^2$.
 
 ---
 

@@ -6,6 +6,31 @@
 
 ---
 
+## 0. Struttura del Repository
+
+```
+README.md                    questo documento: architettura, notazione, roadmap
+common/                      funzioni condivise fra le fasi e script di validazione
+  calcola_Q_cwna.m             rumore di processo in forma CWNA (§2.5)
+  verifica_Q_cwna.m            validazione della Q contro il metodo di Van Loan
+  verifica_consistenza.m       campagna Monte Carlo con test NEES sulla Fase 2
+theory/                      note teoriche di approfondimento
+  TEORIA_rumore_di_processo.md      ruolo di Q, modello CWNA, canale laterale
+  TEORIA_campi_potenziali.md        Khatib, funzione FIRAS, limiti del metodo
+  TEORIA_osservabilita_e_filtro.md  osservabilita', scelta EKF contro UKF
+fase_1/  fase_2/  fase_3/    una cartella per fase, ciascuna con:
+  mainN.m                      script di simulazione
+  READMEN.md                   documentazione della fase
+  risultati/                   figure generate dallo script
+exam/                        regole d'esame e template del report
+```
+
+Tutti gli script ancorano i propri percorsi alla posizione del file tramite
+`mfilename('fullpath')`, e funzionano quindi indipendentemente dalla directory
+di lavoro corrente.
+
+---
+
 ## 1. Modellazione del Sistema e Variabili di Stato
 
 Il cuore matematico del progetto si basa su una modellazione accurata del singolo agente. Per poter gestire in modo coerente le letture dei sensori propriocettivi (odometria, IMU) ed esterocettivi (GPS, UWB), si è scelto di adottare un modello cinematico di tipo **Uniciclo**, estendendo però il vettore di stato per includere le derivate prime.
@@ -58,7 +83,7 @@ La stima dello stato locale di ogni veicolo è affidata a un **Extended Kalman F
 
 **Osservabilità.** Indipendentemente dalla scelta del filtro, gli Jacobiani calcolati a ogni istante di campionamento permettono di valutare il rango della matrice di osservabilità $\mathcal{O}$, e quindi di dimostrare matematicamente come la perdita del GPS la degradi — portando alla deriva della posa assoluta — e come la fusione con le misure UWB permetta di recuperarla.
 
-> La trattazione teorica completa — definizione e criteri di osservabilità, analisi dei quattro regimi attraversati dal sistema, non osservabilità collettiva della flotta, legame fra GDOP e grado di osservabilità, e giustificazione quantitativa della scelta EKF contro UKF — è in [common/TEORIA_osservabilita_e_filtro.md](common/TEORIA_osservabilita_e_filtro.md).
+> La trattazione teorica completa — definizione e criteri di osservabilità, analisi dei quattro regimi attraversati dal sistema, non osservabilità collettiva della flotta, legame fra GDOP e grado di osservabilità, e giustificazione quantitativa della scelta EKF contro UKF — è in [theory/TEORIA_osservabilita_e_filtro.md](theory/TEORIA_osservabilita_e_filtro.md).
 
 ### 2.2 Infrastruttura UWB per Ambienti GPS-Denied
 Nella realtà operativa, il segnale GPS è soggetto ad attenuazioni e multipath, specialmente in ambienti forestali, urbani o indoor. Per ovviare a questo problema in modo economicamente sostenibile, il progetto prevede l'installazione di moduli Ultra-Wideband (UWB). Questa tecnologia, caratterizzata da un'accuratezza centimetrica, viene utilizzata per due scopi:
@@ -82,7 +107,7 @@ I due valori di rumore di ranging riflettono questa asimmetria: $\sigma_{uwb} = 
 Essendo un progetto di Sistemi Distribuiti, non esiste un'unità di calcolo centrale. I veicoli comunicano tra loro scambiandosi le proprie stime di posa. Se un veicolo perde il GPS ma un suo vicino lo mantiene, il sistema sfrutta la distanza UWB e lo scambio dati per correggere la traiettoria del veicolo "cieco".
 Tuttavia, lo scambio continuo di stime in una rete chiusa genera il fenomeno del *Data Rumination*: le informazioni diventano circolari e i filtri di Kalman iniziano a sottostimare la propria covarianza (diventano troppo "ottimisti"). La soluzione prevista è la **Covariance Intersection (CI)**, che garantisce stime statisticamente consistenti anche in presenza di correlazioni ignote fra gli agenti: fonde due stime pesandone le inverse delle covarianze con $\gamma$ e $1-\gamma$, e per *qualunque* correlazione incrociata restituisce un maggiorante della vera covarianza d'errore.
 
-> **Stato di implementazione.** La CI **non è ancora implementata**, ed è programmata per la **Fase 5** (§4). Allo stato attuale i veicoli si scambiano la sola posizione stimata, e la $R$ della misura collaborativa contiene unicamente il rumore del sensore: il filtro ignora l'incertezza $\Sigma_j$ del vicino e risulta quindi **ottimista**. È un limite noto e documentato, non un'omissione — vedi [fase_3/README3.md §3.3](fase_3/README3.md) per la quantificazione e [common/TEORIA_osservabilita_e_filtro.md §1.4](common/TEORIA_osservabilita_e_filtro.md), Caso E, per il legame con l'*observability mismatch*.
+> **Stato di implementazione.** La CI **non è ancora implementata**, ed è programmata per la **Fase 5** (§4). Allo stato attuale i veicoli si scambiano la sola posizione stimata, e la $R$ della misura collaborativa contiene unicamente il rumore del sensore: il filtro ignora l'incertezza $\Sigma_j$ del vicino e risulta quindi **ottimista**. È un limite noto e documentato, non un'omissione — vedi [fase_3/README3.md §3.3](fase_3/README3.md) per la quantificazione e [theory/TEORIA_osservabilita_e_filtro.md §1.4](theory/TEORIA_osservabilita_e_filtro.md), Caso E, per il legame con l'*observability mismatch*.
 
 Va notato che la CI **classica non si applica direttamente** a questo caso: fonde due stime della *stessa* grandezza, mentre il vicino trasmette una stima del *proprio* stato, e da una misura di sola distanza non si ricava una stima puntuale della propria posizione ma una circonferenza. La formulazione corretta è quella di Carrillo-Arce et al. (IROS 2013): l'incertezza del vicino entra come rumore di misura aggiuntivo, $R_{eff} = \sigma_{collab}^2 + u^T\Sigma_j^{(1:2,1:2)}u$, e poiché quel rumore è correlato in modo ignoto con il proprio prior, l'aggiornamento va eseguito in forma CI anziché con il guadagno di Kalman standard.
 
@@ -179,7 +204,7 @@ La flotta, composta inizialmente da $N=3$ veicoli, deve navigare lungo la mappa 
 Invece di adottare un approccio centralizzato, si utilizza un protocollo basato sul **Consenso**. Ogni veicolo agisce in base all'errore calcolato tra la propria posizione e le posizioni stimate dei propri vicini, regolando la propria velocità e sterzatura per convergere alla distanza relativa desiderata.
 Per garantire la sicurezza operativa, al livello di controllo cinematico viene sovrapposto un algoritmo di evitamento collisioni basato sui **Campi Potenziali Artificiali** (Khatib, 1986): se la distanza inter-veicolare scende sotto la soglia $d_{safe}$, viene generata una velocità repulsiva virtuale che devia temporaneamente la traiettoria dei mezzi.
 
-Consenso e repulsione non sono due controllori distinti, ma i due termini di un unico campo potenziale $U = U_{cons} + U_{rep}$, di cui la legge di controllo è l'antigradiente: il consenso è il potenziale **attrattivo**, il cui minimo coincide con la formazione desiderata, e la funzione **FIRAS** di Khatib fornisce quello **repulsivo**. Un requisito di progetto lega i due termini: deve valere $d_{safe} < \min_{i\ne j}\|\Delta_{ij}\|$, altrimenti la repulsione non si annulla mai nella configurazione desiderata e la formazione risulta irraggiungibile (condizione *GNRON*). La trattazione completa — derivazione del gradiente, taratura del guadagno, limiti del metodo e confronto con le Control Barrier Functions — è in [fase_2/TEORIA_campi_potenziali.md](fase_2/TEORIA_campi_potenziali.md).
+Consenso e repulsione non sono due controllori distinti, ma i due termini di un unico campo potenziale $U = U_{cons} + U_{rep}$, di cui la legge di controllo è l'antigradiente: il consenso è il potenziale **attrattivo**, il cui minimo coincide con la formazione desiderata, e la funzione **FIRAS** di Khatib fornisce quello **repulsivo**. Un requisito di progetto lega i due termini: deve valere $d_{safe} < \min_{i\ne j}\|\Delta_{ij}\|$, altrimenti la repulsione non si annulla mai nella configurazione desiderata e la formazione risulta irraggiungibile (condizione *GNRON*). La trattazione completa — derivazione del gradiente, taratura del guadagno, limiti del metodo e confronto con le Control Barrier Functions — è in [theory/TEORIA_campi_potenziali.md](theory/TEORIA_campi_potenziali.md).
 
 ---
 

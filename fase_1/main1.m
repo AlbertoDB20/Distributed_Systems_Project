@@ -44,7 +44,7 @@ t_end = 60;           % [s] durata simulazione
 t = 0:Ts:t_end;
 N_steps = length(t);
 
-%% 2. PARAMETRI DEL FILTRO
+%% 2. PARAMETRI DEL FILTRO E DEI SENSORI
 % -------------------------------------------------------------------------
 % RUMORE DI PROCESSO — modello CWNA (Continuous White Noise Acceleration)
 %
@@ -213,7 +213,9 @@ end
 
 %% 7. PLOT E SALVATAGGIO RISULTATI
 
-cartella_output = fullfile('fase_1', 'risultati'); % Cartella 'risultati' nella directory corrente
+% Percorso ancorato alla posizione dello script, non alla directory corrente:
+% le figure finiscono sempre in fase_1/risultati/ da qualunque cartella si lanci.
+cartella_output = fullfile(fileparts(mfilename('fullpath')), 'risultati');
 if ~exist(cartella_output, 'dir')
     mkdir(cartella_output); % Crea la cartella se non esiste
 end

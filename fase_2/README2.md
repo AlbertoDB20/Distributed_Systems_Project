@@ -53,4 +53,20 @@ Il consenso di §3.2 e questa repulsione **non sono due controllori distinti**: 
 
 Poiché il gradiente scala come $1/d^3$, il guadagno $k_{rep}$ **non è trasferibile fra geometrie di scala diversa**: nel codice non è un numero fissato, ma viene ricavato invertendo il requisito di progetto "a $d = d_{safe}/2$ la repulsione vale $v_{rep,ref}$".
 
-> **Trattazione completa** — origine storica del metodo, derivazione passo per passo del gradiente, verifica dei segni, natura cinematica e non dinamica delle "forze", analisi di convergenza alla Lyapunov, limiti noti (minimi locali, GNRON, saturazione, effetto dell'errore di stima) e confronto con le Control Barrier Functions: vedi **[TEORIA_campi_potenziali.md](TEORIA_campi_potenziali.md)**.
+> **Trattazione completa** — origine storica del metodo, derivazione passo per passo del gradiente, verifica dei segni, natura cinematica e non dinamica delle "forze", analisi di convergenza alla Lyapunov, limiti noti (minimi locali, GNRON, saturazione, effetto dell'errore di stima) e confronto con le Control Barrier Functions: vedi **[TEORIA_campi_potenziali.md](../theory/TEORIA_campi_potenziali.md)**.
+
+## 4. Figure Prodotte
+
+L'esecuzione di `main2.m` genera la cartella `fase_2/risultati/`:
+
+| File | Contenuto |
+|---|---|
+| `1_animazione_flotta.png` | fotogramma finale delle traiettorie reali e stimate |
+| `animazione_flotta.mp4` | animazione completa della convergenza in formazione |
+| `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert$, un pannello per veicolo |
+| `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ |
+| `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione |
+
+Il commento quantitativo alle figure è in [risultati/GRAPH_DISCUSSION.md](risultati/GRAPH_DISCUSSION.md).
+
+Definendo `MODO_BATCH = true` nel workspace prima di lanciare lo script, animazione e figure vengono disattivate: è la modalità usata dalle campagne Monte Carlo di `common/verifica_consistenza.m`.

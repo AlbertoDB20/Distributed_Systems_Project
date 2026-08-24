@@ -34,3 +34,12 @@ Conseguenza pratica già visibile in questa fase: con $Q_{33} = q_\alpha T_s^3/3
 
 ## 3. Analisi di Osservabilità
 In questa configurazione, calcolando la matrice di osservabilità $\mathcal{O} = [C_k; C_k A_k; C_k A_k^2; \dots]$, il rango è pieno (rango 5). Il sistema è completamente e globalmente osservabile grazie alla presenza simultanea del GPS per la posizione assoluta e dell'IMU per l'heading assoluto.
+
+## 4. Figure Prodotte
+
+L'esecuzione di `main1.m` genera la cartella `fase_1/risultati/`:
+
+| File | Contenuto |
+|---|---|
+| `fase1_traiettoria.png` | ground truth, misure GPS grezze e stima EKF sul piano |
+| `fase1_errori.png` | errori di stima su $X$, $Y$ e $\theta$ nel tempo |

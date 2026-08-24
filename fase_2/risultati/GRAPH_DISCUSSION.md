@@ -4,11 +4,23 @@ Questo documento analizza le prestazioni di una flotta di **3 veicoli Differenti
 
 L'esperimento è caratterizzato da un'architettura sensoriale asimmetrica: il veicolo Master (V1) è dotato di un GPS ad alta precisione ($\sigma = 0.2$ m), mentre gli Slave (V2, V3) montano un GPS standard ($\sigma = 2.0$ m).
 
-> **Nota metodologica.** I valori numerici riportati si riferiscono a un singolo run con seed `rng(7)`, sulla versione del simulatore successiva a (a) la correzione dell'ordine temporale del ciclo (vedi [README2.md](README2.md) §2) e (b) la ritaratura dei parametri sulla scala fisica reale di un mezzo battipista (formazione di 36-40 m, $L = 3.5$ m, $b = 2.0$ m, $\omega_{max} = 0.6$ rad/s) e (c) la riformulazione della matrice $Q$ in forma CWNA (README principale, §2.5). Le statistiche "a regime" sono calcolate su $t > 30$ s, escludendo il transitorio di convergenza della formazione. Trattandosi di un run singolo, questi numeri hanno valore **indicativo**: la validazione statistica vera e propria richiede una campagna Monte Carlo con test NEES/NIS, prevista nella fase di validazione finale.
+> **Nota metodologica.** I valori numerici riportati si riferiscono a un singolo run con seed `rng(7)`, sulla versione del simulatore successiva a (a) la correzione dell'ordine temporale del ciclo (vedi [README2.md](../README2.md) §2) e (b) la ritaratura dei parametri sulla scala fisica reale di un mezzo battipista (formazione di 36-40 m, $L = 3.5$ m, $b = 2.0$ m, $\omega_{max} = 0.6$ rad/s) e (c) la riformulazione della matrice $Q$ in forma CWNA (README principale, §2.5). Le statistiche "a regime" sono calcolate su $t > 30$ s, escludendo il transitorio di convergenza della formazione. Trattandosi di un run singolo, questi numeri hanno valore **indicativo**: la validazione statistica vera e propria richiede una campagna Monte Carlo con test NEES/NIS, prevista nella fase di validazione finale.
 
 ---
 
 ## 1. Analisi dell'Errore di Stima (Diagnostica EKF)
+
+### Figure prodotte
+L'esecuzione di `main2.m` genera in questa cartella:
+
+| File | Contenuto |
+|---|---|
+| `1_animazione_flotta.png` | fotogramma finale delle traiettorie reali e stimate; l'animazione completa è in `animazione_flotta.mp4` |
+| `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert = \sqrt{e_X^2+e_Y^2}$, un pannello per veicolo |
+| `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ — griglia $3\times3$, una colonna per veicolo |
+| `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione nel tempo |
+
+La figura 2 sostituisce il precedente grafico dei soli errori su $X$: la norma sul piano è la grandezza fisicamente significativa, mentre le componenti separate restano disponibili nella figura 3 per la diagnostica.
 
 I grafici relativi agli errori di stima ($X$, $Y$, $\theta$) mostrano la differenza tra lo stato reale (ground truth) e lo stato stimato dall'EKF per ogni veicolo.
 
@@ -27,7 +39,17 @@ In tutti i grafici si nota un picco all'istante $t=0$, seguito da una rapida dis
 * **Interpretazione:** la differenza non è casuale, è il guadagno di Kalman al primo aggiornamento. Con $\Sigma_0 = 5$ m² e $R = \sigma_{GPS}^2$, il Master ottiene $K \approx 5/(5+0.04) \approx 0.99$ e cancella quasi integralmente l'errore iniziale in un singolo passo; gli Slave ottengono $K \approx 5/(5+4) \approx 0.55$ e necessitano di più aggiornamenti successivi. La differenza fra V2 e V3 a parità di sensore dipende dalla particolare realizzazione del rumore in questo run.
 
 ### 1.2 L'Impatto del GPS Differenziato (Master vs Slave)
-Le righe degli errori spaziali ($X$ e $Y$) mostrano chiaramente la natura eterogenea della flotta. Deviazione standard dell'errore a regime:
+La natura eterogenea della flotta emerge sia dalla norma dell'errore di posizione (figura 2) sia dalle componenti separate (figura 3).
+
+Errore di posizione scalare a regime, figura `2_errore_posizione_2d.png`:
+
+| Veicolo | RMS $\lVert e_{pos}\rVert$ | media | massimo |
+|---|---|---|---|
+| V1 (Master, GPS RTK) | 0.072 m | 0.061 m | 0.252 m |
+| V2 (Slave, GPS standard) | 0.226 m | 0.193 m | 0.596 m |
+| V3 (Slave, GPS standard) | 0.228 m | 0.199 m | 0.642 m |
+
+Componenti separate a regime, figura `3_diagnostica_ekf.png`:
 
 | Veicolo | $\text{sd}(e_X)$ | $\max\|e_X\|$ | $\text{sd}(e_Y)$ | Copertura $3\sigma$ su $X$ |
 |---|---|---|---|---|

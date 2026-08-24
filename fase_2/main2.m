@@ -75,7 +75,7 @@ t = 0:Ts:t_end;
 N_steps = length(t);
 N_veh = 3;             % Numero di veicoli
 
-%% 2. PARAMETRI DEL FILTRO E SENSORI
+%% 2. PARAMETRI DEL FILTRO E DEI SENSORI
 % -------------------------------------------------------------------------
 % RUMORE DI PROCESSO — modello CWNA (Continuous White Noise Acceleration)
 %
@@ -202,6 +202,8 @@ k_rep  = v_rep_ref / ((1/d_ref - 1/d_safe) * (1/d_ref^2));
 x0_true = [ -30, -20, 0, 0, 0;
              25, -35, 0, 0, 0;
              -5, -55, 0, 0, 0 ]';       % (X, Y, theta, V, W) per ogni veicolo
+
+fleet = repmat(struct(), 1, N_veh);  % preallocazione struct (evita SAGROW)
 
 for i = 1:N_veh
     fleet(i).x_true = zeros(5, N_steps);        % 5 stati: X, Y, theta, V, W
@@ -347,7 +349,13 @@ end
 
 %% 6. PLOT RISULTATI E ANIMAZIONE REAL-TIME
 if ~MODO_BATCH
-figure('Name','Animazione Flotta e Formazione','Color','w'); 
+% Preparazione cartella di destinazione. Percorso ancorato alla posizione
+% dello script, non alla directory corrente: le figure finiscono sempre in
+% fase_2/risultati/ da qualunque cartella si lanci il file.
+cartella_output = fullfile(fileparts(mfilename('fullpath')), 'risultati');
+if ~exist(cartella_output, 'dir'), mkdir(cartella_output); end
+
+fig1 = figure('Name','Animazione Flotta e Formazione','Color','w'); 
 hold on; grid on; axis equal;
 title('Animazione della Traiettoria (Reale vs Stimata)'); 
 xlabel('X [m]'); ylabel('Y [m]');
@@ -369,6 +377,13 @@ for i = 1:N_veh
 end
 legend([h_est_pos(1), h_est_pos(2), h_est_pos(3)], {'Master (V1)', 'Slave (V2)', 'Slave (V3)'}, 'Location', 'best');
 
+
+% Inizializzazione VideoWriter
+video_path = fullfile(cartella_output, 'animazione_flotta.mp4');
+v = VideoWriter(video_path, 'MPEG-4');
+v.FrameRate = 20; % Frame al secondo (regola per velocizzare/rallentare)
+open(v);
+
 % Loop di Animazione
 step_animazione = 2; % Salta un frame per velocizzare l'animazione (cambia a 1 per fluidità massima)
 for k = 1:step_animazione:(N_steps * run_animazione)
@@ -381,28 +396,36 @@ for k = 1:step_animazione:(N_steps * run_animazione)
         set(h_true_pos(i), 'XData', fleet(i).x_true(1, k), 'YData', fleet(i).x_true(2, k));
         set(h_est_pos(i), 'XData', fleet(i).x_est(1, k), 'YData', fleet(i).x_est(2, k));
     end
-    drawnow; % Forza MATLAB a disegnare il frame istantaneamente
+    drawnow;
+
+    % --- Cattura e scrittura del frame nel video ---
+    frame = getframe(fig1);
+    writeVideo(v, frame);
+    
     pause(0.05);
 end
+close(v); % Chiudi il video writer
 
 
-% Grafico degli Errori di Stima GPS
-figure('Name','Confronto Errori Stima X','Color','w');
+exportgraphics(fig1, fullfile(cartella_output, '1_animazione_flotta.png'), 'Resolution', 300);
+
+% Errore Assoluto di Posizione 2D
+fig2 = figure('Name','Errore Assoluto di Posizione 2D','Color','w');
 for i = 1:N_veh
     subplot(3, 1, i);
     err_x = fleet(i).x_true(1,:) - fleet(i).x_est(1,:);
-    plot(t, err_x, colors(i)); grid on;
-    if i == 1
-        title('Errore Posizione X - MASTER (GPS Alta Precisione)');
-    else
-        title(sprintf('Errore Posizione X - SLAVE %d (GPS Standard)', i));
-    end
+    err_y = fleet(i).x_true(2,:) - fleet(i).x_est(2,:);
+    err_pos = sqrt(err_x.^2 + err_y.^2); % Norma dell'errore sul piano (m)
+    
+    plot(t, err_pos, colors(i), 'LineWidth', 1.2); grid on;
+    title(sprintf('V%d: Errore di Posizione Scalare ||e_{pos}||', i));
     ylabel('Errore [m]');
 end
 xlabel('Tempo [s]');
+exportgraphics(fig2, fullfile(cartella_output, '2_errore_posizione_2d.png'), 'Resolution', 300);
 
-% --- DASHBOARD SALUTE EKF (Errori X, Y, Theta) ---
-figure('Name','Diagnostica EKF: Errore di Stima','Color','w', 'Position', [100, 100, 1000, 600]);
+% DASHBOARD SALUTE EKF (Errori X, Y, Theta)
+fig3 = figure('Name','Diagnostica EKF: Errore di Stima','Color','w', 'Position', [100, 100, 1000, 600]);
 for i = 1:N_veh
     % Calcolo degli errori per tutte e tre le variabili spaziali
     err_x = fleet(i).x_true(1,:) - fleet(i).x_est(1,:);
@@ -435,10 +458,11 @@ for i = 1:N_veh
     xlabel('Tempo [s]'); 
     if i==1; ylabel('[rad]'); end
 end
+exportgraphics(fig3, fullfile(cartella_output, '3_diagnostica_ekf.png'), 'Resolution', 300);
 
 
-%% --- DASHBOARD FORZE VIRTUALI (Consenso e Repulsione) ---
-figure('Name','Analisi delle Forze Virtuali nel Tempo','Color','w', 'Position', [150, 150, 1000, 500]);
+% --- DASHBOARD FORZE VIRTUALI (Consenso e Repulsione) ---
+fig4 = figure('Name','Analisi delle Forze Virtuali nel Tempo','Color','w', 'Position', [150, 150, 1000, 500]);
 
 for i = 1:N_veh
     % Calcolo della magnitudo (norma) dei vettori forza istante per istante
@@ -463,12 +487,11 @@ for i = 1:N_veh
     subplot(2, N_veh, i);       ylim([0, max(0.1, max(mag_F_cons)*1.2)]);
     subplot(2, N_veh, i+N_veh); ylim([0, max(0.1, max(mag_F_rep)*1.2)]);
 end
+exportgraphics(fig4, fullfile(cartella_output, '4_forze_virtuali.png'), 'Resolution', 300);
 
 end  % if ~MODO_BATCH  (fine blocco grafici)
 
-%% ========================================================================
-% FUNZIONI LOCALI
-% =========================================================================
+%% FUNZIONI LOCALI
 
 function z = genera_misure(x_true, R_gps, R_imu, R_enc, param)
     % Simula il vettore di misure z = [GPS(2); IMU(2); ENC(2)] a partire dallo

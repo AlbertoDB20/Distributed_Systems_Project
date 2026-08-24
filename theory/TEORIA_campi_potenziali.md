@@ -1,7 +1,7 @@
 # Campi Potenziali Artificiali e Funzione FIRAS
 ### Nota teorica di approfondimento — evitamento collisioni inter-veicolare
 
-Questo documento raccoglie il quadro teorico completo dietro le poche righe di codice che generano la forza repulsiva fra i mezzi. È pensato per essere esposto oralmente.
+Questo documento raccoglie il quadro teorico completo alla base delle poche righe di codice che generano la forza repulsiva fra i mezzi.
 
 ---
 
@@ -50,7 +50,7 @@ err_ij = (p_est(:, i) - p_est(:, j)) - Delta(:, i, j);
 F_cons = F_cons - K_cons * err_ij;
 ```
 
-> **Punto importante da dire all'orale:** il consenso e i campi potenziali non sono due tecniche diverse incollate insieme. Il consenso *è* il termine attrattivo di un campo potenziale, dove il minimo dell'energia coincide con la formazione desiderata. Il sistema completo è un unico campo, con un termine di attrazione e uno di repulsione.
+> **Osservazione centrale.** Il consenso e i campi potenziali non sono due tecniche distinte giustapposte. Il consenso *è* il termine attrattivo di un campo potenziale, dove il minimo dell'energia coincide con la formazione desiderata. Il sistema completo è un unico campo, con un termine di attrazione e uno di repulsione.
 
 ### 2.2 Il termine repulsivo — cosa deve garantire
 
@@ -107,7 +107,7 @@ end
 
 **Comportamento al bordo.** In $d = d_0$: $\left(\frac{1}{d_0}-\frac{1}{d_0}\right)=0$, quindi $F_{rep} = 0$ **esattamente**. La forza è continua ($C^0$) attraverso la soglia.
 
-> **Precisazione onesta, utile se l'esaminatore insiste:** la forza è continua ma la sua *derivata* non lo è. Infatti
+> **Precisazione sulla regolarità.** La forza è continua, ma la sua *derivata* non lo è. Infatti
 > $$\frac{dF}{dd} = k_{rep}\left(-\frac{3}{d^4}+\frac{2}{d_0 d^3}\right) \quad\Longrightarrow\quad \left.\frac{dF}{dd}\right|_{d=d_0} = -\frac{k_{rep}}{d_0^4} \ne 0$$
 > Il campo è quindi $C^0$ ma non $C^1$ in $d_0$. Basta a evitare il chattering grossolano, non a garantire un comando derivabile.
 
@@ -125,7 +125,7 @@ $$\dot{p}_{cmd,i} = \underbrace{V_{ref}}_{\text{missione}} + \underbrace{F_{cons
 
 che viene poi invertita nella feedback linearization per ottenere i comandi fisici $(v,\omega)$.
 
-È una semplificazione standard (*first-order* o *kinematic APF*), legittima perché a 2.5 m/s la dinamica di un battipista è lenta rispetto al ciclo di controllo a 10 Hz. Ma **va dichiarata**: se l'esaminatore chiede "dov'è la massa?", la risposta è che non c'è, e questo significa che il modello non cattura l'inerzia — un mezzo da 9 tonnellate non cambia velocità istantaneamente.
+È una semplificazione standard (*first-order* o *kinematic APF*), legittima perché a 2.5 m/s la dinamica di un battipista è lenta rispetto al ciclo di controllo a 10 Hz. L'ipotesi **va comunque dichiarata**: nel modello non compare alcuna massa, e di conseguenza l'inerzia non è rappresentata. Un mezzo da 9 tonnellate non varia la propria velocità istantaneamente.
 
 Di conseguenza $k_{rep}$ non è in newton: ha unità **[m³/s]**, come si verifica dimensionalmente:
 $$[F] = [k_{rep}]\cdot\left[\tfrac{1}{m}\right]\cdot\left[\tfrac{1}{m^2}\right] = \tfrac{m}{s} \;\Longrightarrow\; [k_{rep}] = \tfrac{m^3}{s}$$
@@ -182,7 +182,7 @@ quindi $U$ è una **funzione di Lyapunov**: non cresce mai, e per il principio d
 
 ---
 
-## 7. Limiti noti (la parte su cui l'esaminatore preme)
+## 7. Limiti noti del metodo
 
 **1. Minimi locali.** Il difetto storico dell'APF. L'attrazione e la repulsione possono bilanciarsi in un punto che non è l'obiettivo, e il robot si ferma lì. Il metodo è reattivo, non completo. Rimedi noti: *navigation functions* di Rimon-Koditschek (dimostrabilmente prive di minimi locali su *sphere worlds*), perturbazione casuale per uscire dalla stallo, oppure un pianificatore globale sovrapposto.
 
@@ -190,7 +190,7 @@ quindi $U$ è una **funzione di Lyapunov**: non cresce mai, e per il principio d
 
 > **Nel nostro progetto questo diventa un vincolo di progetto esplicito:**
 > $$d_{safe} < \min_{i\ne j}\|\Delta_{ij}\|$$
-> cioè $15 < 36.1$. Se la soglia di sicurezza superasse la distanza nominale di formazione, la formazione sarebbe **matematicamente irraggiungibile**. È il tipo di disuguaglianza che conviene saper enunciare.
+> cioè $15 < 36.1$. Se la soglia di sicurezza superasse la distanza nominale di formazione, la formazione sarebbe **matematicamente irraggiungibile**. La disuguaglianza costituisce quindi un vincolo di progetto e non una semplice raccomandazione.
 
 **3. Saturazione degli attuatori.** Sotto i 6 m la repulsione richiede più di $v_{max}$. Il comando viene tagliato, e nessuna proprietà del campo potenziale sopravvive alla saturazione: la sicurezza non è garantita in quel regime.
 
@@ -204,7 +204,7 @@ con $\sigma_{rel}$ deviazione standard dell'errore di posizione **relativa**. In
 
 ## 8. L'alternativa moderna: Control Barrier Functions
 
-Se l'esaminatore chiede *"come lo faresti meglio oggi?"*, la risposta è **CBF**.
+L'alternativa oggi preferibile è la formulazione a **Control Barrier Function**.
 
 Invece di **aggiungere** un termine repulsivo e sperare, si definisce l'insieme sicuro come $\mathcal{C} = \{x : h(x)\ge 0\}$ (per esempio $h = \|p_i-p_j\|^2 - d_{safe}^2$) e si impone la condizione
 
@@ -218,27 +218,27 @@ Vantaggi rispetto all'APF: garantisce l'**invarianza in avanti** dell'insieme si
 
 ---
 
-## 9. Domande probabili all'orale, con risposta breve
+## 9. Chiarimenti su punti ricorrenti
 
-**"Perché la funzione FIRAS ha quella forma e non $1/d^2$?"**
+**Perché la funzione FIRAS ha quella forma e non $1/d^2$?**
 Perché $\left(\frac1d-\frac1{d_0}\right)$ si annulla esattamente in $d_0$. Con $1/d^2$ la forza salterebbe da un valore finito a zero attraversando la soglia, generando chattering.
 
-**"Le tue forze sono in newton?"**
-No, in m/s. È controllo cinematico: il campo produce la velocità desiderata del punto di controllo, non una forza. Non c'è massa nel modello.
+**Le "forze" sono espresse in newton?**
+No, in m/s. Si tratta di controllo cinematico: il campo produce la velocità desiderata del punto di controllo, non una forza. Nel modello non compare alcuna massa.
 
-**"Cosa succede se un veicolo si blocca?"**
+**Cosa accade se un veicolo si arresta?**
 Minimo locale. L'APF è reattivo e incompleto: converge a un punto critico del potenziale, non necessariamente all'obiettivo.
 
-**"Mi garantisci che non si scontrino?"**
-No, e sarebbe scorretto dirlo. L'APF non fornisce garanzie formali in presenza di saturazione degli attuatori e di errore di stima. Per una garanzia servirebbe una CBF con QP.
+**L'assenza di collisioni è garantita?**
+No. L'APF non fornisce garanzie formali in presenza di saturazione degli attuatori e di errore di stima. Una garanzia richiederebbe una formulazione a Control Barrier Function con QP.
 
-**"Cosa succede se aumento $d_{safe}$ oltre la distanza di formazione?"**
+**Cosa accade portando $d_{safe}$ oltre la distanza di formazione?**
 GNRON: la formazione diventa irraggiungibile perché la repulsione non si annulla mai nella configurazione desiderata. Serve $d_{safe} < \min\|\Delta_{ij}\|$.
 
-**"Perché $k_{rep}=2531$?"**
+**Perché $k_{rep} = 2531$?**
 Non è una costante fisica: è un fattore di scala in m³/s ricavato invertendo un requisito di progetto. Poiché il gradiente scala come $1/d^3$, il guadagno scala come $d_{safe}^3$ e non è trasferibile fra geometrie diverse.
 
-**"Il consenso e il campo potenziale sono due controllori distinti?"**
+**Consenso e campo potenziale sono due controllori distinti?**
 No, sono i due termini dello stesso campo: il consenso è il potenziale attrattivo, la repulsione quello repulsivo. La legge di controllo è l'antigradiente della loro somma.
 
 ---

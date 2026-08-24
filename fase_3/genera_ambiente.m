@@ -176,12 +176,12 @@ xlabel('X [m]'); ylabel('Y [m]');
 [~, obj_h] = legend('Location', 'best');
 
 %% 7. SALVATAGGIO DATI
-% Il file viene sempre scritto nella RADICE del progetto, indipendentemente
-% dalla cartella corrente: eseguendo lo script dall'IDE la working directory
-% diventa fase_3/, e senza questo accorgimento si creerebbe una seconda copia
-% dell'ambiente che puo' divergere silenziosamente da quella usata da main3.
-root_progetto = fileparts(fileparts(mfilename('fullpath')));
-file_out = fullfile(root_progetto, 'ambiente_fase3.mat');
+% Il file viene sempre scritto ACCANTO A QUESTO SCRIPT, cioe' in fase_3/,
+% che e' dove main3.m lo cerca. Il percorso e' ancorato alla posizione del
+% file e non alla directory corrente: senza questo accorgimento, lanciando lo
+% script dalla radice o dall'IDE si otterrebbero due copie dell'ambiente in
+% cartelle diverse, destinate a divergere in silenzio.
+file_out = fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase3.mat');
 save(file_out, 'W_MAP', 'H_MAP', 'gps_denied_zones', 'tipo_percorso', ...
      'path_points', 'uwb_opt', 'r_ancora');
 fprintf('Ambiente generato e salvato in "%s".\n', file_out);
