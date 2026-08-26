@@ -100,6 +100,7 @@ L'esecuzione di `main3.m` genera la cartella `fase_3/risultati/` con sei figure.
 | `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione |
 | `5_copertura_e_covarianza.png` | riferimenti assoluti disponibili e traccia di $\Sigma_{pos}$ nel tempo |
 | `6_bound_3sigma.png` | errore di stima confrontato con l'inviluppo a $\pm 3\sigma$ dichiarato dal filtro |
+| `7_grafo_comunicazione.png` | $\lambda_2(L)$, $\rho_2(Q)$ e distanze inter-veicolari contro il raggio radio |
 
 ### 4.1 Lettura della mappa (figura 1)
 - **Tratteggio nero**: percorso nominale, inseguito dal solo Master.
@@ -123,8 +124,25 @@ Valori medi di $\text{tr}(\Sigma_{pos})$ misurati (seed 7, transitorio escluso):
 
 Il Master, che dispone di GPS RTK, subisce un lieve peggioramento entrando in zona cieca. Gli Slave, che montano GPS standard, registrano invece un **miglioramento di oltre sette volte**: con cinque ancore ben distribuite il ranging UWB a $\sigma = 0.5$ m porta più informazione di un GPS a $\sigma = 2.0$ m. È la quantificazione, sul piano della covarianza, del risultato già riportato al §3.3 in termini di errore.
 
-### 4.3 Consistenza (figura 6)
+### 4.3 Grafo di comunicazione (figura 7)
+La legge di consenso è pesata dalla matrice di **adiacenza** del grafo, e non più applicata indiscriminatamente a tutti i veicoli. Il raggio di comunicazione coincide con `r_collab` = 120 m, la portata del ranging inter-veicolare: è la stessa radio UWB a fornire sia la misura di distanza sia il canale dati, quindi non avrebbe senso che il consenso raggiungesse un vicino con cui il ranging è impossibile.
+
+La versione precedente iterava il consenso su tutti i veicoli senza controllo di portata, assumendo implicitamente connettività totale. Con $d_{ij} = 36\text{–}40$ m ed $R_c = 120$ m il grafo resta comunque completo e i risultati numerici non cambiano, ma la struttura ora è corretta ed è il presupposto del §19.2.6 del corso, dove il raggio diventa il parametro che frammenta la topologia.
+
+| Grandezza | Valore misurato |
+|---|---|
+| Connettività algebrica $\lambda_2(L)$ | 3.0000 (= $K_3$ completo) |
+| Essential spectral radius $\rho_2(Q)$ | 0.0000 |
+| Costante di tempo $\tau = 1/(K_{cons}\lambda_2)$ | 2.22 s |
+| Distanza inter-veicolare massima | 41.7 m, ossia il **35%** del raggio disponibile |
+| Grafo connesso per l'intera missione | sì |
+
+Il terzo pannello riporta le distanze reciproche contro $R_c$: il margine del 65% spiega perché i primi due pannelli risultino costanti. La topologia diventerà tempo-variante nelle fasi successive, con latenze e perdite di pacchetto.
+
+> Trattazione completa: [TEORIA_consenso_su_grafi.md](../theory/TEORIA_consenso_su_grafi.md).
+
+### 4.4 Consistenza (figura 6)
 Confronto fra l'errore di stima effettivo e l'inviluppo $\pm 3\sigma$ estratto da `Sigma_hist`. La frazione di campioni fuori banda risulta compresa fra 0.0% e 0.3% contro un valore atteso di 0.3% per un filtro esattamente calibrato: il filtro è consistente e leggermente conservativo. La verifica è condotta su singolo run a scopo diagnostico; la validazione statistica con campagna Monte Carlo e test NEES è prevista in Fase 6.
 
-### 4.4 Nota sulla figura 4
+### 4.5 Nota sulla figura 4
 In questa fase la formazione viene inizializzata già nella configurazione desiderata, quindi non esiste il transitorio di riavvicinamento presente in Fase 2. Di conseguenza la forza repulsiva risulta **identicamente nulla** per l'intera missione, e lo sforzo di consenso si mantiene pressoché costante. Il valore non nullo a regime (1.67 m/s per il Master, 0.83 m/s per gli Slave) corrisponde all'errore di inseguimento descritto al §3.3, punto d.

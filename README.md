@@ -12,12 +12,16 @@
 README.md                    questo documento: architettura, notazione, roadmap
 common/                      funzioni condivise fra le fasi e script di validazione
   calcola_Q_cwna.m             rumore di processo in forma CWNA (§2.5)
+  costruisci_grafo.m           adiacenza, grado, Laplaciano, lambda_2 (§3.1)
+  pesi_metropolis.m            matrice di consenso doppiamente stocastica (§3.1)
   verifica_Q_cwna.m            validazione della Q contro il metodo di Van Loan
+  verifica_grafo.m             validazione delle proprieta' spettrali del grafo
   verifica_consistenza.m       campagna Monte Carlo con test NEES sulla Fase 2
 theory/                      note teoriche di approfondimento
   TEORIA_rumore_di_processo.md      ruolo di Q, modello CWNA, canale laterale
   TEORIA_campi_potenziali.md        Khatib, funzione FIRAS, limiti del metodo
   TEORIA_osservabilita_e_filtro.md  osservabilita', scelta EKF contro UKF
+  TEORIA_consenso_su_grafi.md       consenso lineare, Laplaciano, pesi Metropolis
 fase_1/  fase_2/  fase_3/    una cartella per fase, ciascuna con:
   mainN.m                      script di simulazione
   READMEN.md                   documentazione della fase
@@ -200,9 +204,40 @@ A queste si aggiunge $S_t = C_t\bar\Sigma_t C_t^T + R_t$, la **covarianza dell'i
 
 ## 3. Controllo di Formazione (Consenso)
 
-La flotta, composta inizialmente da $N=3$ veicoli, deve navigare lungo la mappa mantenendo una specifica formazione (ad esempio, muovendosi affiancati). 
-Invece di adottare un approccio centralizzato, si utilizza un protocollo basato sul **Consenso**. Ogni veicolo agisce in base all'errore calcolato tra la propria posizione e le posizioni stimate dei propri vicini, regolando la propria velocità e sterzatura per convergere alla distanza relativa desiderata.
-Per garantire la sicurezza operativa, al livello di controllo cinematico viene sovrapposto un algoritmo di evitamento collisioni basato sui **Campi Potenziali Artificiali** (Khatib, 1986): se la distanza inter-veicolare scende sotto la soglia $d_{safe}$, viene generata una velocità repulsiva virtuale che devia temporaneamente la traiettoria dei mezzi.
+La flotta, composta inizialmente da $N=3$ veicoli, deve navigare lungo la mappa mantenendo una specifica formazione (ad esempio, muovendosi affiancati). Invece di adottare un approccio centralizzato, si utilizza un protocollo basato sul **Consenso lineare su grafi**.
+
+### 3.1 Formalizzazione algebrica
+
+La rete di comunicazione è modellata come grafo $\mathcal{G} = (\mathcal{N},\mathcal{E})$, con matrice di **adiacenza** $A$, matrice di **grado** $D$ e **Laplaciano** $L = D - A$. La legge di controllo per l'$i$-esimo veicolo è
+
+$$u_i = -K_{cons}\sum_{j} a_{ij}\Big[(p_i - p_j) - \Delta_{ij}\Big]$$
+
+Introducendo la variabile traslata $\tilde p_i = p_i - p_i^{des}$, l'errore di formazione diventa $\tilde p_i - \tilde p_j$ e la legge si riscrive in forma matriciale come
+
+$$u = -K_{cons}\,(L \otimes I_2)\,\tilde p$$
+
+cioè **esattamente il protocollo di consenso lineare**. Il mantenimento della formazione non è quindi un problema distinto dal consenso: è consenso su coordinate traslate. Ne segue che l'intera teoria del Cap. 17 si applica senza adattamenti — condizione di spanning tree, connettività algebrica, costante di tempo.
+
+| Grandezza | Significato | Valore nel progetto |
+|---|---|---|
+| $\lambda_2(L)$ | connettività algebrica: $>0$ ⟺ grafo connesso, e ne quantifica il grado | 3.0000 ($K_3$ completo) |
+| $\rho_2(Q)$ | essential spectral radius: fattore di convergenza asintotico | 0.0000 |
+| $\tau = 1/(K_{cons}\lambda_2)$ | costante di tempo dell'errore di formazione | 2.22 s |
+
+I pesi della matrice di consenso $Q$ sono costruiti con la regola di **Metropolis-Hastings**, $q_{ij} = 1/(\max(d_i,d_j)+1)$, che ogni nodo calcola conoscendo soltanto il proprio grado e quello dei vicini diretti — nessuna conoscenza della topologia globale. La regola produce una $Q$ simmetrica e quindi **doppiamente stocastica**, condizione necessaria perché il consenso converga alla media aritmetica esatta (*average consensus*) anziché a una combinazione pesata arbitraria.
+
+**Risultato notevole.** Con grafo completo la regola di Metropolis dà $q_{ij} = 1/n$ per ogni coppia, quindi $Q = \frac{1}{n}\mathbf{1}\mathbf{1}^T$ e $\rho_2 = 0$: il consenso medio converge in **un solo passo**. Con $N=3$ in rete full-mesh gli algoritmi di stima distribuita del Cap. 18 risulterebbero quindi esatti già con una sola iterazione di consenso.
+
+### 3.2 Vincolo di portata radio
+
+Il grafo è vincolato dal raggio di comunicazione: in Fase 2 il canale è ideale ($R_c = \infty$, grafo completo per costruzione), in Fase 3 $R_c$ coincide con la portata UWB `r_collab` = 120 m, poiché è la stessa radio a fornire sia la misura di distanza sia il canale dati. Le distanze inter-veicolari raggiungono al massimo 41.7 m, il 35% del raggio disponibile: il grafo resta connesso per l'intera missione. Il margine diventa critico nelle fasi successive, quando latenze e perdite di pacchetto renderanno la topologia tempo-variante.
+
+L'adiacenza pesa il **solo** termine di consenso. La repulsione anti-collisione resta attiva verso ogni veicolo entro $d_{safe}$ indipendentemente dal grafo: è un vincolo di sicurezza fisico, e deve agire anche verso un mezzo con cui il canale dati è caduto.
+
+> Trattazione completa — matrici stocastiche e doppiamente stocastiche, proprietà spettrali del Laplaciano, teorema dello spanning tree, progettazione dei pesi e validazione numerica: [theory/TEORIA_consenso_su_grafi.md](theory/TEORIA_consenso_su_grafi.md).
+
+### 3.3 Evitamento delle collisioni
+Al livello di controllo cinematico viene sovrapposto un algoritmo di evitamento collisioni basato sui **Campi Potenziali Artificiali** (Khatib, 1986): se la distanza inter-veicolare scende sotto la soglia $d_{safe}$, viene generata una velocità repulsiva virtuale che devia temporaneamente la traiettoria dei mezzi.
 
 Consenso e repulsione non sono due controllori distinti, ma i due termini di un unico campo potenziale $U = U_{cons} + U_{rep}$, di cui la legge di controllo è l'antigradiente: il consenso è il potenziale **attrattivo**, il cui minimo coincide con la formazione desiderata, e la funzione **FIRAS** di Khatib fornisce quello **repulsivo**. Un requisito di progetto lega i due termini: deve valere $d_{safe} < \min_{i\ne j}\|\Delta_{ij}\|$, altrimenti la repulsione non si annulla mai nella configurazione desiderata e la formazione risulta irraggiungibile (condizione *GNRON*). La trattazione completa — derivazione del gradiente, taratura del guadagno, limiti del metodo e confronto con le Control Barrier Functions — è in [theory/TEORIA_campi_potenziali.md](theory/TEORIA_campi_potenziali.md).
 

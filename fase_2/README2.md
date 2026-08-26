@@ -34,11 +34,21 @@ $$\begin{bmatrix} \dot{p}_{xi} \\ \dot{p}_{yi} \end{bmatrix} = \begin{bmatrix} \
 
 ### 3.2 Legge di Consenso Integrata
 Definita una traiettoria nominale descritta da una velocità di riferimento $V_{ref}$, e una matrice di posizioni relative desiderate $\Delta_{ij}$, la legge di controllo per il punto $p_i$ è:
-$$\dot{p}_{cmd, i} = V_{ref} - K_c \sum_{j \in \mathcal{N}_i} A_{ij} \left( (p_i - p_j) - \Delta_{ij} \right) + F_{rep, i}$$
+$$\dot{p}_{cmd, i} = V_{ref} - K_c \sum_{j} a_{ij} \left( (p_i - p_j) - \Delta_{ij} \right) + F_{rep, i}$$
 Dove:
 - $K_c$ è il guadagno del consenso.
-- $A_{ij}$ sono i pesi della matrice di adiacenza (tutti 1 per rete full-mesh, tranne la diagonale).
+- $a_{ij}$ sono gli elementi della **matrice di adiacenza** del grafo di comunicazione, costruita da `common/costruisci_grafo.m`. In questa fase il canale è ideale ($R_c = \infty$), quindi il grafo è il completo $K_3$ e $a_{ij} = 1$ per ogni $i \ne j$.
 - $\Delta_{ij}$ è l'offset desiderato del veicolo $i$ rispetto al veicolo $j$.
+
+**Il termine di consenso è il protocollo lineare del Cap. 17.** Introducendo la variabile traslata $\tilde p_i = p_i - p_i^{des}$, l'errore di formazione diventa $(p_i - p_j) - \Delta_{ij} = \tilde p_i - \tilde p_j$, e la sommatoria si riscrive in forma matriciale come
+
+$$u = -K_c\,(L \otimes I_2)\,\tilde p$$
+
+con $L = D - A$ il Laplaciano. La dinamica dell'errore è quindi $\dot e = -K_c L e$, che decade come $e^{-K_c\lambda_2 t}$: la costante di tempo vale $\tau = 1/(K_c\lambda_2)$. Per il grafo completo $K_3$ si ha $\lambda_2 = 3$, da cui $\tau = 1/(3 \cdot 0.15) = 2.22$ s — valore verificato in simulazione.
+
+Il codice registra inoltre a ogni passo la connettività algebrica $\lambda_2(L)$, l'essential spectral radius $\rho_2(Q)$ dei pesi di Metropolis-Hastings e il numero di archi attivi, riportati nella figura `5_grafo_comunicazione.png`.
+
+> Trattazione completa del consenso lineare su grafi: [TEORIA_consenso_su_grafi.md](../theory/TEORIA_consenso_su_grafi.md).
 
 Nel codice la matrice di inversione $T_{fl}^{-1}$ è `T_fl_inv`: il nome evita la collisione con $R$, che in tutto il progetto indica esclusivamente la covarianza del rumore di misura (vedi la tabella di notazione nel README principale, §2.5).
 
@@ -66,6 +76,7 @@ L'esecuzione di `main2.m` genera la cartella `fase_2/risultati/`:
 | `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert$, un pannello per veicolo |
 | `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ |
 | `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione |
+| `5_grafo_comunicazione.png` | $\lambda_2(L)$, $\rho_2(Q)$ e numero di archi attivi nel tempo |
 
 Il commento quantitativo alle figure è in [risultati/GRAPH_DISCUSSION.md](risultati/GRAPH_DISCUSSION.md).
 

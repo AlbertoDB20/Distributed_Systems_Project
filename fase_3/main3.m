@@ -163,6 +163,7 @@ empty_fleet = struct( ...
     'in_denied_hist', false(1, N_steps), ...
     'Sigma_hist', zeros(5,5,N_steps), ...
     'F_cons_hist', zeros(2, N_steps), ...  % sforzo di consenso, per il grafico 4
+    'grado_hist', zeros(1, N_steps), ...   % grado del nodo nel grafo
     'F_rep_hist',  zeros(2, N_steps), ...  % forza repulsiva, per il grafico 4
     'n_uwb_hist',    zeros(1, N_steps), ...% n. ancore fisse viste a ogni passo
     'n_collab_hist', zeros(1, N_steps), ...% n. vicini usati come ancora mobile
@@ -178,11 +179,50 @@ for i = 1:N_veh
 end
 
 % Guadagni riscalati sulla nuova geometria (vedi Fase 2 per la derivazione).
-K_cons    = 0.15;       % tau = 1/(3*K_cons) ~ 2.2 s sul grafo completo K3
+K_cons    = 0.15;       % tau = 1/(K_cons*lambda_2), vedi grafo qui sotto
+
+% -------------------------------------------------------------------------
+% GRAFO DI COMUNICAZIONE (Cap. 17)
+% Come in Fase 2, il consenso e' pesato dalla matrice di ADIACENZA e coincide
+% con il protocollo lineare u = -K_cons*(L kron I_2)*p_tilde sulla variabile
+% traslata p_tilde_i = p_i - pos_des_i.
+%
+% DIFFERENZA RISPETTO ALLA FASE 2: qui il grafo e' vincolato dalla PORTATA
+% RADIO. Il raggio usato e' lo stesso r_collab del ranging inter-veicolare,
+% perche' e' la stessa radio UWB a fornire sia la misura di distanza sia il
+% canale dati: non avrebbe senso che il consenso raggiungesse un vicino con
+% cui il ranging non e' possibile.
+%
+% La versione precedente iterava il consenso su TUTTI i veicoli senza alcun
+% controllo di portata, assumendo quindi implicitamente connettivita' totale
+% anche oltre il raggio radio. Con d_ij = 36-40 m ed r_collab = 120 m il grafo
+% resta comunque completo e i risultati numerici non cambiano, ma la struttura
+% ora e' corretta ed e' il presupposto del §19.2.6 (Communication Range), dove
+% il raggio diventa il parametro che frammenta la topologia.
+R_c_comm = r_collab;    % [m] raggio di comunicazione = portata UWB
 d_safe    = 15.0;       % [m] ingombro fisico dei mezzi + margine
 v_rep_ref = 3.0;        % [m/s] intensita' repulsiva desiderata a d = d_safe/2
 d_ref     = d_safe / 2;
 k_rep     = v_rep_ref / ((1/d_ref - 1/d_safe) * (1/d_ref^2));
+
+% -------------------------------------------------------------------------
+% VINCOLO DI PROGETTO: d_safe < R_c_comm
+% La repulsione si attiva solo per d_ij < d_safe; il canale dati esiste per
+% d_ij <= R_c. Essendo d_safe < R_c, l'insieme in cui la repulsione agisce e'
+% CONTENUTO in quello in cui la comunicazione esiste: quando la repulsione
+% serve, il link e' necessariamente attivo.
+%
+% Non e' un dettaglio formale. La repulsione ha bisogno della DIREZIONE verso
+% il vicino, non solo della distanza, e la direzione si ricava dalla stima
+% ricevuta via radio. Il ranging UWB da solo fornirebbe d_ij ma non il
+% bearing, quindi non basterebbe: senza link dati non ci sarebbe repulsione.
+% Il vincolo garantisce che questa situazione non possa presentarsi.
+assert(d_safe < R_c_comm, ['Vincolo di progetto violato: d_safe = %.1f m deve ' ...
+    'essere minore del raggio di comunicazione R_c = %.1f m, altrimenti ' ...
+    'esisterebbero configurazioni in cui la repulsione e'' necessaria ma la ' ...
+    'posizione del vicino non e'' disponibile.'], d_safe, R_c_comm);
+% -------------------------------------------------------------------------
+
 
 %% 5. INIZIALIZZAZIONE STRUTTURA FLOTTA
 % La formazione e' definita nel riferimento GLOBALE: la legge di consenso usa
@@ -263,6 +303,11 @@ end
 disp('Simulazione in corso...');
 N_end = N_steps;    % indice dell'ultimo campione valido (aggiornato all'arrivo)
 
+% Diagnostica del grafo di comunicazione, registrata a ogni passo
+lambda2_hist = zeros(1, N_steps);   % connettivita' algebrica
+rho2_hist    = zeros(1, N_steps);   % essential spectral radius (pesi Metropolis)
+n_archi_hist = zeros(1, N_steps);   % archi attivi
+
 for k = 1:N_steps-1
 
     % --- (1) BROADCAST ---------------------------------------------------
@@ -272,6 +317,22 @@ for k = 1:N_steps-1
         xe = fleet(i).x_est(:, k);
         p_ctrl(1, i) = xe(1) + param.b * cos(xe(3));
         p_ctrl(2, i) = xe(2) + param.b * sin(xe(3));
+    end
+
+    % Grafo di comunicazione a t_k, vincolato dalla portata radio (Cap. 17).
+    G = costruisci_grafo(p_ctrl, R_c_comm);
+    % NOTA: di pesi_metropolis si usa qui il solo rho2, come indicatore di
+    % velocita' di convergenza. La matrice Q NON entra nella legge di
+    % controllo: quella e' in forma laplaciana e usa l'adiacenza G.A.
+    % Q servira' agli algoritmi di stima distribuita del Cap. 18, che
+    % sono invece algoritmi di sostituzione e richiedono doppia
+    % stocasticita'. Vedi theory/TEORIA_consenso_su_grafi.md §4.2 e §5.1.
+    [~, rho2] = pesi_metropolis(G.A);
+    lambda2_hist(k) = G.lambda2;
+    rho2_hist(k)    = rho2;
+    n_archi_hist(k) = G.n_archi;
+    for i = 1:N_veh
+        fleet(i).grado_hist(k) = G.D(i,i);
     end
 
     % Stime dei vicini propagate a t_{k+1}: ancore mobili per la
@@ -310,10 +371,20 @@ for k = 1:N_steps-1
 
         % Consenso e repulsione, sulle stime condivise a t_k
         for j = 1:N_veh
-            if i ~= j
+            % Consenso PESATO DALL'ADIACENZA: il contributo del vicino j entra
+            % solo se l'arco esiste, cioe' solo se j e' in portata radio.
+            if G.A(i,j) > 0
                 err_ij = (p_ctrl(:, i) - p_ctrl(:, j)) - Delta(:, i, j);
-                u_cons = u_cons - K_cons * err_ij;
+                u_cons = u_cons - K_cons * G.A(i,j) * err_ij;
+            end
 
+            % Repulsione: il guard e' "i ~= j" e non "G.A(i,j) > 0", ma i due
+            % sono EQUIVALENTI per il vincolo d_safe < R_c verificato sopra.
+            % La repulsione si attiva solo entro d_safe = 15 m, distanza alla
+            % quale il link (R_c = 120 m) e' sempre attivo. Si usa la forma
+            % piu' larga perche' conservativa: se il vincolo venisse violato,
+            % il guard su G.A spegnerebbe la repulsione proprio quando serve.
+            if i ~= j
                 dist = norm(p_ctrl(:, i) - p_ctrl(:, j));
                 if dist < d_safe && dist > 0.1
                     grad_d  = (p_ctrl(:, i) - p_ctrl(:, j)) / dist;
@@ -660,6 +731,47 @@ for i = 1:N_veh
     end
 end
 exportgraphics(fig6, fullfile(cartella_output, '6_bound_3sigma.png'), 'Resolution', 300);
+
+% Diagnostica del grafo di comunicazione (Cap. 17)
+kk = 1:(N_end-1);
+fig7 = figure('Name','Grafo di Comunicazione: connettivita e convergenza','Color','w', ...
+              'Position', [200, 200, 1000, 600]);
+
+subplot(3,1,1);
+plot(t(kk), lambda2_hist(kk), 'b', 'LineWidth', 1.5); grid on; hold on;
+yline(N_veh, 'k--', 'LineWidth', 1);
+ylabel('\lambda_2(L)'); ylim([0, N_veh*1.3]);
+title(sprintf('Connettivita algebrica (K_%d completo: \\lambda_2 = %d)', N_veh, N_veh));
+
+subplot(3,1,2);
+plot(t(kk), rho2_hist(kk), 'r', 'LineWidth', 1.5); grid on;
+ylabel('\rho_2(Q)'); ylim([-0.05, 1.05]);
+title('Essential spectral radius dei pesi di Metropolis');
+
+subplot(3,1,3); hold on; grid on;
+d_max = 0;
+for a = 1:N_veh, for b = a+1:N_veh
+    d_ab = vecnorm(fleet(a).x_true(1:2,kk) - fleet(b).x_true(1:2,kk));
+    plot(t(kk), d_ab, 'LineWidth', 1.2, 'DisplayName', sprintf('d_{%d%d}', a, b));
+    d_max = max(d_max, max(d_ab));
+end; end
+yline(R_c_comm, 'k--', 'LineWidth', 1.5, 'DisplayName', 'R_c (portata radio)');
+xlabel('Tempo [s]'); ylabel('Distanza [m]'); legend('Location','best');
+ylim([0, max(d_max, R_c_comm)*1.15]);
+title('Distanze inter-veicolari contro il raggio di comunicazione');
+exportgraphics(fig7, fullfile(cartella_output, '7_grafo_comunicazione.png'), 'Resolution', 300);
+
+% --- Riepilogo a console delle grandezze di Cap. 17 ---
+fprintf('\n--- GRAFO DI COMUNICAZIONE (Cap. 17) ---\n');
+fprintf('Raggio di comunicazione   : %.0f m\n', R_c_comm);
+fprintf('Connettivita algebrica    : lambda_2 = %.4f  (K_%d completo: %d)\n', ...
+        mean(lambda2_hist(kk)), N_veh, N_veh);
+fprintf('Essential spectral radius : rho_2   = %.4f\n', mean(rho2_hist(kk)));
+fprintf('Costante di tempo prevista: tau = 1/(K_cons*lambda_2) = %.2f s\n', ...
+        1/(K_cons*mean(lambda2_hist(kk))));
+fprintf('Grafo connesso per tutta la missione: %s\n', string(all(lambda2_hist(kk) > 1e-9)));
+fprintf('Margine di portata: d_max = %.1f m contro R_c = %.0f m (%.0f%% del raggio)\n', ...
+        d_max, R_c_comm, 100*d_max/R_c_comm);
 
 fprintf('Figure salvate in %s\n', cartella_output);
 

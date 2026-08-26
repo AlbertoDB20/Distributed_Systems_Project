@@ -19,6 +19,7 @@ L'esecuzione di `main2.m` genera in questa cartella:
 | `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert = \sqrt{e_X^2+e_Y^2}$, un pannello per veicolo |
 | `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ — griglia $3\times3$, una colonna per veicolo |
 | `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione nel tempo |
+| `5_grafo_comunicazione.png` | connettività algebrica, essential spectral radius e archi attivi |
 
 La figura 2 sostituisce il precedente grafico dei soli errori su $X$: la norma sul piano è la grandezza fisicamente significativa, mentre le componenti separate restano disponibili nella figura 3 per la diagnostica.
 
@@ -93,6 +94,19 @@ Rappresenta la magnitudo del vettore di correzione della velocità generato per 
 La copertura dei bound a $3\sigma$ risulta del 100% su tutti e tre i veicoli, e il test NEES su 30 run Monte Carlo (`common/verifica_consistenza.m`) fornisce un valore medio di **4.03** contro il valore atteso $E[\text{NEES}] = n = 5$. Il filtro è quindi **conservativo di circa 1.25×**: dichiara un'incertezza leggermente superiore all'errore che effettivamente commette. È la condizione desiderabile per un estimatore di sicurezza — l'alternativa, un filtro ottimista, produrrebbe bound a $3\sigma$ che non contengono l'errore reale.
 
 Va detto che una copertura del 100% è di per sé un indizio di conservativismo: per un filtro perfettamente calibrato ci si attenderebbe circa il 99.7%. Il margine residuo è coerente con il fatto che l'impianto simulato non ha ancora rumore di processo, mentre $Q > 0$: la calibrazione definitiva sarà possibile solo dopo l'introduzione dello slittamento in Fase 5.
+
+### 2.1.2 Il consenso come protocollo su grafo
+La legge di formazione è ora pesata dalla matrice di adiacenza e coincide con il protocollo lineare $u = -K_c(L\otimes I_2)\tilde p$ sulla variabile traslata $\tilde p = p - p^{des}$. La figura `5_grafo_comunicazione.png` riporta le tre grandezze del Cap. 17:
+
+| Grandezza | Valore | Interpretazione |
+|---|---|---|
+| $\lambda_2(L)$ | 3.0000 | coincide con il valore analitico per $K_n$ con $n=3$; il grafo è connesso |
+| $\rho_2(Q)$ | 0.0000 | con grafo completo i pesi di Metropolis danno $Q = \frac{1}{3}\mathbf{1}\mathbf{1}^T$: media esatta in **un passo** |
+| archi attivi | 3 | $n(n-1)/2$, grafo completo |
+
+La costante di tempo prevista dalla teoria, $\tau = 1/(K_c\lambda_2) = 1/(0.15\cdot3) = 2.22$ s, è coerente con il transitorio osservato: la formazione rientra entro 1 m dalle distanze nominali a $t = 13.2$ s, circa sei costanti di tempo, come atteso per un decadimento esponenziale a partire da errori iniziali di decine di metri.
+
+I tre grafici sono costanti perché in questa fase il canale è ideale ($R_c = \infty$) e la topologia non cambia mai.
 
 ### 2.2 Forza Repulsiva ($|F_{rep}|$)
 * **Risultato:** con la taratura sulla scala fisica reale il meccanismo **si attiva**. V2 e V3 registrano un picco di 1.79 m/s durante il transitorio, quando le traiettorie di rientro in formazione si incrociano. V1 non lo attiva mai. A regime la curva è nulla per tutti.

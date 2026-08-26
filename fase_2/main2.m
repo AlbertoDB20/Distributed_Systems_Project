@@ -180,6 +180,28 @@ end
 % attuatori per tutto il transitorio e invalidando la feedback linearization.
 K_cons = 0.15;
 
+% -------------------------------------------------------------------------
+% GRAFO DI COMUNICAZIONE (Cap. 17)
+% La legge di consenso non e' piu' un doppio ciclo su tutti i vicini, ma e'
+% pesata dalla matrice di ADIACENZA del grafo. Definendo la variabile traslata
+%       p_tilde_i = p_i - pos_des_i
+% l'errore di formazione diventa (p_i - p_j) - Delta_ij = p_tilde_i - p_tilde_j,
+% e la legge di controllo si riscrive in forma matriciale come
+%       u = -K_cons * (L kron I_2) * p_tilde
+% cioe' ESATTAMENTE il protocollo di consenso lineare del Cap. 17 applicato
+% alla variabile traslata. La formazione non e' quindi un problema diverso dal
+% consenso: e' consenso su coordinate rototraslate.
+%
+% Conseguenza operativa: la dinamica dell'errore e' e_dot = -K_cons*L*e, quindi
+% decade come exp(-K_cons*lambda2*t) e la costante di tempo vale
+%       tau = 1 / (K_cons * lambda2)
+% con lambda2 la connettivita' algebrica restituita da costruisci_grafo().
+%
+% In questa fase il canale e' IDEALE (full-mesh), quindi R_c = Inf e il grafo
+% e' il completo K3, per cui lambda2 = N_veh = 3 e tau = 1/(3*K_cons) ~ 2.2 s.
+% Il vincolo di portata diventa attivo in Fase 3.
+R_c_comm = Inf;     % [m] raggio di comunicazione (Inf = canale ideale)
+
 % RAGGIO DI SICUREZZA — Deve rappresentare l'ingombro fisico reale: due mezzi
 % da ~5 m (9 m con fresa e lama) non devono avvicinarsi oltre questa soglia.
 % Resta ampiamente sotto la distanza nominale di formazione (36 m), quindi la
@@ -194,6 +216,25 @@ d_safe = 15.0;      % [m]
 v_rep_ref = 3.0;    % [m/s] intensita' repulsiva desiderata a d = d_safe/2
 d_ref  = d_safe / 2;
 k_rep  = v_rep_ref / ((1/d_ref - 1/d_safe) * (1/d_ref^2));
+
+% -------------------------------------------------------------------------
+% VINCOLO DI PROGETTO: d_safe < R_c_comm
+% La repulsione si attiva solo per d_ij < d_safe; il canale dati esiste per
+% d_ij <= R_c. Essendo d_safe < R_c, l'insieme in cui la repulsione agisce e'
+% CONTENUTO in quello in cui la comunicazione esiste: quando la repulsione
+% serve, il link e' necessariamente attivo.
+%
+% Non e' un dettaglio formale. La repulsione ha bisogno della DIREZIONE verso
+% il vicino, non solo della distanza, e la direzione si ricava dalla stima
+% ricevuta via radio. Il ranging UWB da solo fornirebbe d_ij ma non il
+% bearing, quindi non basterebbe: senza link dati non ci sarebbe repulsione.
+% Il vincolo garantisce che questa situazione non possa presentarsi.
+assert(d_safe < R_c_comm, ['Vincolo di progetto violato: d_safe = %.1f m deve ' ...
+    'essere minore del raggio di comunicazione R_c = %.1f m, altrimenti ' ...
+    'esisterebbero configurazioni in cui la repulsione e'' necessaria ma la ' ...
+    'posizione del vicino non e'' disponibile.'], d_safe, R_c_comm);
+% -------------------------------------------------------------------------
+
 
 %% 4. INIZIALIZZAZIONE STRUTTURA FLOTTA
 % Inizializziamo i veicoli con posizioni casuali per vedere il transitorio --> questa posizione iniziale non la conosciamo nella realtà, in simultazione è solo per testare la capacità del sistema di convergere alla formazione desiderata partendo da una configurazione disordinata.
@@ -221,6 +262,7 @@ for i = 1:N_veh
     fleet(i).Sigma_hist  = zeros(5, 5, N_steps);  % storico covarianza, per
                                                   % 3-sigma bounds e test NEES
     fleet(i).Sigma_hist(:,:,1) = fleet(i).Sigma;
+    fleet(i).grado_hist  = zeros(1, N_steps);     % grado del nodo nel grafo
     
     % Assegna R_gps (Covarianza del rumore di MISURA GPS) specifica in base al ruolo
     if i == 1
@@ -258,6 +300,11 @@ for i = 1:N_veh
     fleet(i).z_hist(:,1) = genera_misure(fleet(i).x_true(:,1), fleet(i).R_gps, R_imu, R_enc, param);
 end
 
+% Diagnostica del grafo di comunicazione, registrata a ogni passo
+lambda2_hist = zeros(1, N_steps);   % connettivita' algebrica
+rho2_hist    = zeros(1, N_steps);   % essential spectral radius dei pesi Metropolis
+n_archi_hist = zeros(1, N_steps);   % numero di archi attivi
+
 for k = 1:N_steps-1
     % Riferimento di velocita' della flotta, valutato a t_k
     if lin_traj == false
@@ -276,19 +323,50 @@ for k = 1:N_steps-1
         p_est(2, i) = xe(2) + param.b * sin(xe(3));
     end
 
+    % Grafo di comunicazione a t_k: adiacenza, grado, Laplaciano (Cap. 17).
+    % Va ricostruito a ogni passo perche' in generale la topologia dipende
+    % dalle posizioni, e in Fase 4/6 dipendera' anche da latenze e perdite.
+    G = costruisci_grafo(p_est, R_c_comm);
+    % NOTA: di pesi_metropolis si usa qui il solo rho2, come indicatore di
+    % velocita' di convergenza. La matrice Q NON entra nella legge di
+    % controllo: quella e' in forma laplaciana e usa l'adiacenza G.A.
+    % Q servira' agli algoritmi di stima distribuita del Cap. 18, che
+    % sono invece algoritmi di sostituzione e richiedono doppia
+    % stocasticita'. Vedi theory/TEORIA_consenso_su_grafi.md §4.2 e §5.1.
+    [~, rho2] = pesi_metropolis(G.A);
+    lambda2_hist(k) = G.lambda2;
+    rho2_hist(k)    = rho2;
+    n_archi_hist(k) = G.n_archi;
+    for i = 1:N_veh
+        fleet(i).grado_hist(k) = G.D(i,i);
+    end
+
     % --- (2) CONTROLLO + (3) IMPIANTO ------------------------------------
     for i = 1:N_veh
         F_cons = [0; 0];    % N.B. "Forze" omogenee a velocita': sono in [m/s]
         F_rep  = [0; 0];
 
         for j = 1:N_veh
-            if i ~= j       % il consenso e' solo con gli altri, non con se stessi
-                % 1. Consenso: ATTRAZIONE verso la formazione (LINEARE)
+            % 1. Consenso: pesato dalla matrice di ADIACENZA. Il termine viene
+            %    sommato solo se l'arco (j,i) esiste nel grafo, cioe' solo se i
+            %    riceve effettivamente da j. Sostituisce il precedente "i ~= j",
+            %    che assumeva implicitamente connettivita' totale.
+            if G.A(i,j) > 0
                 % Errore fra la distanza relativa stimata e quella desiderata.
+                % Equivale a (p_tilde_i - p_tilde_j): e' la riga i-esima di L*p_tilde.
                 err_ij = (p_est(:, i) - p_est(:, j)) - Delta(:, i, j);
-                F_cons = F_cons - K_cons * err_ij;      % legge di Hooke: F = -K*x
+                F_cons = F_cons - K_cons * G.A(i,j) * err_ij;
+            end
 
-                % 2. Evitamento collisioni: REPULSIONE (NON LINEARE, attiva a soglia)
+            % 2. Evitamento collisioni: REPULSIONE (NON LINEARE, attiva a soglia).
+            %    Il guard e' "i ~= j" e non "G.A(i,j) > 0", ma i due sono
+            %    EQUIVALENTI per il vincolo di progetto d_safe < R_c verificato
+            %    sopra: la repulsione si attiva solo entro d_safe, distanza alla
+            %    quale il link e' sempre presente. Si usa la forma piu' larga
+            %    perche' e' quella conservativa dal punto di vista della
+            %    sicurezza: se il vincolo venisse violato, il guard su G.A
+            %    spegnerebbe la repulsione in silenzio proprio quando serve.
+            if i ~= j
                 dist = norm(p_est(:, i) - p_est(:, j));
                 if dist < d_safe && dist > 0.1
                     grad_d  = (p_est(:, i) - p_est(:, j)) / dist;   % versore da j verso i
@@ -488,6 +566,39 @@ for i = 1:N_veh
     subplot(2, N_veh, i+N_veh); ylim([0, max(0.1, max(mag_F_rep)*1.2)]);
 end
 exportgraphics(fig4, fullfile(cartella_output, '4_forze_virtuali.png'), 'Resolution', 300);
+
+% Diagnostica del grafo di comunicazione (Cap. 17)
+kk = 1:(N_steps-1);
+fig5 = figure('Name','Grafo di Comunicazione: connettivita'' e convergenza','Color','w', ...
+              'Position', [200, 200, 1000, 600]);
+
+subplot(3,1,1);
+plot(t(kk), lambda2_hist(kk), 'b', 'LineWidth', 1.5); grid on; hold on;
+yline(N_veh, 'k--', 'LineWidth', 1, 'Label', sprintf('K_%d completo: \lambda_2 = %d', N_veh, N_veh));
+ylabel('\lambda_2(L)'); ylim([0, N_veh*1.3]);
+title('Connettivita'' algebrica: \lambda_2 > 0 garantisce la convergenza del consenso');
+
+subplot(3,1,2);
+plot(t(kk), rho2_hist(kk), 'r', 'LineWidth', 1.5); grid on;
+ylabel('\rho_2(Q)'); ylim([-0.05, 1.05]);
+title('Essential spectral radius dei pesi di Metropolis (\rho_2 = 0: media esatta in un passo)');
+
+subplot(3,1,3);
+plot(t(kk), n_archi_hist(kk), 'k', 'LineWidth', 1.5); grid on;
+yline(N_veh*(N_veh-1)/2, 'k--', 'LineWidth', 1);
+xlabel('Tempo [s]'); ylabel('N. archi');
+title('Archi attivi nel grafo di comunicazione');
+exportgraphics(fig5, fullfile(cartella_output, '5_grafo_comunicazione.png'), 'Resolution', 300);
+
+% --- Riepilogo a console delle grandezze di Cap. 17 ---
+fprintf('\n--- GRAFO DI COMUNICAZIONE (Cap. 17) ---\n');
+fprintf('Raggio di comunicazione   : %s\n', string(R_c_comm));
+fprintf('Connettivita'' algebrica    : lambda_2 = %.4f  (K_%d completo: %d)\n', ...
+        mean(lambda2_hist(kk)), N_veh, N_veh);
+fprintf('Essential spectral radius : rho_2   = %.4f\n', mean(rho2_hist(kk)));
+fprintf('Costante di tempo prevista: tau = 1/(K_cons*lambda_2) = %.2f s\n', ...
+        1/(K_cons*mean(lambda2_hist(kk))));
+fprintf('Grafo connesso per tutta la missione: %s\n', string(all(lambda2_hist(kk) > 1e-9)));
 
 end  % if ~MODO_BATCH  (fine blocco grafici)
 
