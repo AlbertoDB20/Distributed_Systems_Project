@@ -82,7 +82,7 @@ Per valutare lo stato della rete e la velocità della simulazione si monitorano 
 $$\tau = \frac{1}{K_{cons} \, \lambda_2}$$
 
 ### 2. Raggio Spettrale Essenziale ($\rho_2$ di $Q$)
-* Determina la velocità con cui gli algoritmi di stima distribuita (D-WLS, DKF del Cap. 18) mediano la **coppia informativa** $(F_i, a_i) = (H_i^T R_i^{-1} H_i, \; H_i^T R_i^{-1} z_i)$. Si lavora nel dominio dell'informazione, e non su stime e misure, perché le informazioni si **sommano**: è questo che rende lecito sostituirle con una media.
+* Determina la velocità con cui gli algoritmi di stima distribuita (D-WLS, DKF del Cap. 18) mediano la **coppia informativa** $(F_i, a_i) = (C_i^T R_i^{-1} C_i, \; C_i^T R_i^{-1} z_i)$. Si lavora nel dominio dell'informazione, e non su stime e misure, perché le informazioni si **sommano**: è questo che rende lecito sostituirle con una media. Il D-WLS è implementato in `common/consenso_dwls.m` e applicato in Fase 3: vedi [TEORIA_stima_distribuita.md](TEORIA_stima_distribuita.md).
 * **Proprietà del Grafo Completo ($K_3$)**: Con $N = 3$ veicoli tutti connessi tra loro, la regola di Metropolis rende $Q = \frac{1}{3} \mathbf{1}\mathbf{1}^T$. In questo caso **$\rho_2 = 0$**, il che garantisce la convergenza alla media aritmetica esatta in **1 singolo passo di comunicazione**.
 
 ---
@@ -114,5 +114,5 @@ Sui dati di simulazione (`common/verifica_grafo.m`), il modello teorico è stato
 ## Riferimenti
 
 * *Intelligent Distributed Systems*, Cap. 17 — consenso lineare, matrici stocastiche, Laplaciano, progettazione dei pesi.
-* *Intelligent Distributed Systems*, Cap. 18 — D-WLS e DKF, connettività congiunta.
+* *Intelligent Distributed Systems*, Cap. 18 — D-WLS e DKF, connettività congiunta. Trattazione dedicata in [TEORIA_stima_distribuita.md](TEORIA_stima_distribuita.md).
 * L. Xiao, S. Boyd, *"Fast linear iterations for distributed averaging"*, Systems & Control Letters 53, 2004 — progettazione ottima dei pesi.
