@@ -74,13 +74,38 @@ par_Q.k_terreno = 0.0;    % [1/s]       Q adattiva q_a += k_terreno*v^2, attiva 
 % filtro pessimista e non ottimista: e' la condizione sicura. La calibrazione
 % contro uno slittamento vero sara' possibile solo in Fase 5.
 
-% COVARIANZE DEI SENSORI
-R_gps_master  = diag([0.2^2, 0.2^2]);    % [x, y] ricevitore RTK
-R_gps_slave   = diag([2.0^2, 2.0^2]);    % [x, y] ricevitore standard
-R_imu         = diag([0.05^2, 0.02^2]);  % [theta, omega]
+% SENSORI: MODELLI REALI E FREQUENZE NATIVE
+% Il passo di simulazione resta 10 Hz. Ogni sensore viene pero' trattato per
+% quello che e': chi lavora piu' in fretta del passo si legge a 10 Hz senza
+% penalita', chi lavora piu' piano fornisce una misura solo ogni N passi.
+%
+%   AHRS Xsens MTi-3            100 Hz interni, letto a 10 Hz
+%     filtra internamente e restituisce un assetto gia' elaborato, quindi la
+%     sigma di targa vale alla frequenza di lettura e non va riscalata.
+%   Sensore di velocita' a effetto Hall sul pignone di trazione
+%     conta impulsi sulla finestra di campionamento: 100 ms e' la finestra
+%     naturale, ne' lenta ne' veloce rispetto al passo.
+%   Ranging UWB Qorvo DW1000    ~1 ms per scambio TW-TOF
+%     con 5 ancore e 4 vicini servono 9 scambi, cioe' 9 ms su 100: sta nel passo.
+%   GNSS u-blox ZED-F9P (RTK)   fino a 20 Hz, qui usato a 5 Hz
+%   GNSS u-blox NEO-M8N         1 Hz nominale
+%
+% E' il GNSS l'unico sensore piu' lento del passo, e va decimato: campionarlo
+% a 10 Hz significherebbe dargli fino a dieci volte le misure che produce,
+% cioe' dichiarare un ricevitore migliore di quello montato. Con un NEO-M8N a
+% 1 Hz l'equivalente sarebbe sigma = 0.63 m anziche' 2.0 m.
+R_gps_master  = diag([0.2^2, 0.2^2]);    % [x, y] ZED-F9P in RTK su neve, valore conservativo
+R_gps_slave   = diag([2.0^2, 2.0^2]);    % [x, y] NEO-M8N, 2.5 m CEP da datasheet
+R_imu         = diag([0.05^2, 0.02^2]);  % [theta, omega] MTi-3: 2 deg RMS su yaw
 R_enc         = diag([0.1^2, 0.1^2]);    % [w_destro, w_sinistro]
 R_traz_master = 0.010^2;                 % [-]^2 torsiometro, trasmissione strumentata
 R_traz_slave  = 0.025^2;                 % [-]^2 torsiometro, sensoristica di serie
+
+% Periodo di aggiornamento del GNSS, espresso in passi di simulazione
+f_gps_master  = 5;                       % [Hz] ZED-F9P, conservativo sui 20 di targa
+f_gps_slave   = 1;                       % [Hz] NEO-M8N, frequenza nominale
+passi_gps_master = round(f_s / f_gps_master);   % 1 fix ogni 2 passi
+passi_gps_slave  = round(f_s / f_gps_slave);    % 1 fix ogni 10 passi
 
 % Il torsiometro misura lo sforzo di trazione specifico F_traz/W ed e' l'unico
 % sensore che non serve alla stima della posa: alimenta il D-WLS della §5.
@@ -259,6 +284,8 @@ fleet = repmat(struct( ...
     'in_denied_hist', false(1, N_steps), ...      % copertura GPS
     'n_uwb_hist',     zeros(1, N_steps), ...      % ancore fisse in vista (figura 5)
     'R_gps',          [], ...
+    'passi_gps',      1, ...                     % periodo del fix GNSS, in passi
+    'n_fix_gps',      0, ...                     % fix effettivamente ricevuti
     'R_traz',         0, ...
     'F_loc',          zeros(2), ...               % matrice di informazione locale
     'a_loc',          zeros(2,1), ...             % stato di informazione locale
@@ -273,11 +300,13 @@ for i = 1:N_veh
     fleet(i).Sigma_hist(:,:,1) = fleet(i).Sigma;
 
     if i == 1
-        fleet(i).R_gps  = R_gps_master;
-        fleet(i).R_traz = R_traz_master;
+        fleet(i).R_gps     = R_gps_master;
+        fleet(i).R_traz    = R_traz_master;
+        fleet(i).passi_gps = passi_gps_master;
     else
-        fleet(i).R_gps  = R_gps_slave;
-        fleet(i).R_traz = R_traz_slave;
+        fleet(i).R_gps     = R_gps_slave;
+        fleet(i).R_traz    = R_traz_slave;
+        fleet(i).passi_gps = passi_gps_slave;
     end
 
     fleet(i).target_idx = idx_start + 1;
@@ -519,7 +548,14 @@ for k = 1:N_steps-1
         end
         fleet(i).in_denied_hist(k+1) = in_denied;
 
-        if ~in_denied
+        % Il fix arriva solo ai multipli del periodo del ricevitore. Sono due
+        % condizioni distinte: in_denied dice se il segnale ESISTE in quel
+        % punto, il resto dice se il ricevitore ha prodotto una soluzione a
+        % questo passo. Fra un fix e l'altro il veicolo procede in sola
+        % predizione, sostenuto da AHRS ed encoder.
+        fix_gps = ~in_denied && mod(k, fleet(i).passi_gps) == 0;
+
+        if fix_gps
             % GPS attivo: misura diretta di posizione assoluta
             z_gps    = xt_next(1:2) + chol(fleet(i).R_gps)' * randn(2,1);
             z        = [z; z_gps];                          %#ok<AGROW>
@@ -527,7 +563,8 @@ for k = 1:N_steps-1
             C_k      = [C_k; 1 0 0 0 0; 0 1 0 0 0];         %#ok<AGROW>
             R_k      = blkdiag(R_k, fleet(i).R_gps);
             is_angle = [is_angle; false; false];            %#ok<AGROW>
-        else
+            fleet(i).n_fix_gps = fleet(i).n_fix_gps + 1;
+        elseif in_denied
             % RANGING UWB VERSO LE ANCORE FISSE
             % sono riferimenti ASSOLUTI: ancorano la posizione nel riferimento
             % mappa. Il contatore alimenta la figura 5, dove spiega l'andamento
@@ -913,8 +950,12 @@ for i = 1:N_veh
     cop_tutti   = cop_tutti   & ~fleet(i).in_denied_hist(1:N_end);
     cop_nessuno = cop_nessuno &  fleet(i).in_denied_hist(1:N_end);
 end
-fprintf('Copertura GPS: tutti %.1f%%, mista %.1f%%, nessuno %.1f%%\n', ...
+fprintf('Copertura GPS (segnale disponibile): tutti %.1f%%, mista %.1f%%, nessuno %.1f%%\n', ...
         100*mean(cop_tutti), 100*mean(~cop_tutti & ~cop_nessuno), 100*mean(cop_nessuno));
+fprintf('Fix GNSS effettivi        : V1 %.1f Hz (ZED-F9P), V2-V%d %.1f Hz (NEO-M8N)\n', ...
+        fleet(1).n_fix_gps/t(N_end), N_veh, fleet(2).n_fix_gps/t(N_end));
+fprintf('   in sola predizione fra un fix e l altro: %.0f%% dei passi a cielo aperto\n', ...
+        100*(1 - 1/passi_gps_slave));
 fprintf('   veicolo    MAE con GPS   MAE in zona cieca   tr(Sigma) con GPS / cieca\n');
 ruoli    = repmat({'(Slave) '}, 1, N_veh);
 ruoli{1} = '(Master)';
