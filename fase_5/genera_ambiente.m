@@ -181,7 +181,7 @@ xlabel('X [m]'); ylabel('Y [m]');
 % file e non alla directory corrente: senza questo accorgimento, lanciando lo
 % script dalla radice o dall'IDE si otterrebbero due copie dell'ambiente in
 % cartelle diverse, destinate a divergere in silenzio.
-file_out = fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase4.mat');
+file_out = fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase5.mat');
 save(file_out, 'W_MAP', 'H_MAP', 'gps_denied_zones', 'tipo_percorso', ...
      'path_points', 'uwb_opt', 'r_ancora');
 fprintf('Ambiente generato e salvato in "%s".\n', file_out);
