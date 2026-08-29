@@ -84,7 +84,9 @@ Su grafo completo $\rho_2 = 0$ e il diametro vale 1: la formula restituisce $q =
 
 I $q$ cicli **non** occupano passi di campionamento. Il consenso vive sulla scala dei tempi della radio: uno scambio TW-TOF su DW1000 dura circa 1 ms, contro i 100 ms del passo di controllo. Fra due istanti di campionamento successivi il canale sostiene quindi decine di cicli, e l'intero round di stima si esaurisce prima che il controllo debba agire di nuovo.
 
-Ne segue che il D-WLS può essere eseguito **a ogni passo** anziché periodicamente, senza alcun costo in termini di dinamica. Quel che cambia non è l'accuratezza — che dipende dall'informazione accumulata, non dalla frequenza con cui la si interroga — ma la **latenza** con cui il risultato è disponibile. L'ipotesi andrà rivista in Fase 4, dove le latenze di rete diventano esplicite.
+Ne segue che il D-WLS può essere eseguito **a ogni passo** anziché periodicamente, senza alcun costo in termini di dinamica. Quel che cambia non è l'accuratezza — che dipende dall'informazione accumulata, non dalla frequenza con cui la si interroga — ma la **latenza** con cui il risultato è disponibile.
+
+L'ipotesi di canale ideale sui cicli di consenso regge anche in Fase 4, dove ritardo e perdite sono introdotti sul solo **broadcast delle pose a 10 Hz**. I cicli del D-WLS vivono due ordini di grandezza più in basso, e trattarli come non ideali è materia della Fase 6, dove entra la connettività congiunta (§7).
 
 ---
 

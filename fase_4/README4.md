@@ -189,7 +189,7 @@ $$z_{collab}^{(j)} = ||p_i - \hat{p}_j|| + \nu_{rel}$$
 **Sincronizzazione dell'ancora mobile.** L'ancora usata non è $\hat{p}_j$ al tempo $t_k$, ma la sua **propagazione di un passo** con il modello di moto del vicino:
 $$\hat{p}_{j, k+1|k} = \begin{bmatrix} \hat{x}_{j,k} + \hat{v}_{j,k}\cos(\hat{\theta}_{j,k}) T_s \\ \hat{y}_{j,k} + \hat{v}_{j,k}\sin(\hat{\theta}_{j,k}) T_s \end{bmatrix}$$
 La scelta risponde a due esigenze distinte:
-1. **Causalità e assenza di loop algebrico.** Usare la stima aggiornata $\hat{x}_{j,k+1}$ renderebbe il filtro di $i$ dipendente dal filtro di $j$ al medesimo istante — e viceversa, dato che $j$ fa lo stesso con $i$. Il ritardo di un passo rompe la circolarità e corrisponde a ciò che un canale reale rende effettivamente disponibile: l'ultimo pacchetto ricevuto. In Fase 4 questo ritardo diventerà esplicito e variabile.
+1. **Causalità e assenza di loop algebrico.** Usare la stima aggiornata $\hat{x}_{j,k+1}$ renderebbe il filtro di $i$ dipendente dal filtro di $j$ al medesimo istante — e viceversa, dato che $j$ fa lo stesso con $i$. Il ritardo rompe la circolarità e corrisponde a ciò che un canale reale rende effettivamente disponibile: l'ultimo pacchetto ricevuto. Qui vale un passo solo in assenza di ritardo di canale: con il modello del §1.5 la propagazione copre l'intera età del pacchetto.
 2. **Coerenza temporale.** La misura fisica $d_{ij}$ è acquisita a $t_{k+1}$. Confrontarla con una posizione riferita a $t_k$ introdurrebbe un bias sistematico di $|v_j| T_s$, dello stesso ordine del rumore del sensore ($\sigma_{collab} = 0.6$ m a 2.5 m/s).
 
 Ciò crea un accoppiamento matematico fra gli agenti: se un veicolo perde tutti i riferimenti assoluti (no GPS, no UWB), la sua stima non degrada come nel dead-reckoning puro, ma resta agganciata a quella del resto della flotta.
@@ -217,9 +217,7 @@ La copertura mista è la condizione in cui la localizzazione collaborativa serve
 
 Resta il 9.4% di campioni in cui **nessun** veicolo dispone di riferimenti assoluti diversi dalle ancore UWB fisse. In quelle condizioni il ranging inter-veicolare non può correggere la posizione assoluta della flotta: una traslazione rigida dell'intero gruppo lascia tutte le distanze relative invariate, quindi la direzione di traslazione comune appartiene al nucleo della matrice di osservabilità collettiva. È una proprietà strutturale, non un difetto di taratura.
 
-**c) Accuratezza della stima di posa.** Errore medio di posizione e traccia della covarianza, separati fra copertura GPS e zona cieca, su missione completa (1078.6 s):
-
-I valori aggiornati ai passi 4.1 e 4.2 sono nella tabella del §1.6. Prima della decimazione del GNSS, con tutti i sensori a 10 Hz, valevano:
+**c) Accuratezza della stima di posa.** I valori correnti, comprensivi dei passi 4.1 e 4.2, sono nella tabella del §1.6. Con tutti i sensori a 10 Hz e canale ideale, cioè al solo passo 4.0, valevano:
 
 | Veicolo | MAE con GPS | MAE in zona cieca |
 |---|---|---|
@@ -232,14 +230,20 @@ Il fatto che i quattro Slave siano fra loro indistinguibili, comprese le due ali
 
 **d) Errore di inseguimento a regime, e il suo costo sulla velocità della flotta.** Solo il Master riceve il termine di velocità $V_{rif}$ del path following; gli Slave si muovono unicamente per effetto del consenso, e devono quindi mantenere un errore di formazione non nullo per generare la velocità necessaria a stare al passo. È l'errore a regime di un controllo puramente proporzionale che insegue un riferimento in movimento.
 
-Il costo si vede sulla velocità media della flotta, che è **0.50 m/s contro i 2.5 m/s di riferimento** — ed era 0.83 m/s in Fase 3 con tre mezzi. Aggiungere veicoli a una formazione del primo ordine guidata da un Master la **rallenta**: la missione passa da 692 a 1079 secondi.
+C'è una legge esatta dietro. A regime la formazione è rigida e si muove tutta alla stessa velocità $v_f$, quindi $v_f = V_{rif,i} - K_{cons}(L\tilde p)_i$ per ogni veicolo. Sommando su tutti gli $i$ e sfruttando $\mathbf{1}^T L = 0$, il termine di consenso **sparisce**:
 
-La correzione naturale è propagare $V_{rif}$ a tutta la flotta in feedforward, come già avviene in Fase 2 dove il fenomeno non si presenta, oppure passare al consenso del secondo ordine, in cui ogni agente ha una propria posizione desiderata e il Master smette di essere un punto singolo di guasto.
+$$n\,v_f = \sum_i V_{rif,i} \qquad\Longrightarrow\qquad v_f = \frac{v_{cruise}}{N}$$
+
+perché il solo Master riceve $V_{rif}$. Il consenso è una forza *interna* e non può spostare il baricentro: l'unica spinta esterna viene dal Master e si divide fra tutti. Verifica: $2.5/3 = 0.83$ m/s con tre mezzi (misurato 0.83), $2.5/5 = 0.50$ con cinque (misurato 0.50).
+
+Aggiungere veicoli a una formazione del primo ordine guidata da un Master la **rallenta** quindi in proporzione diretta. La missione passa da 692 s (Fase 3) a 1079 s (passo 4.0), e a **1218 s** con il ritardo di canale del passo 4.2, che toglie un ulteriore 13% agendo su errori di formazione vecchi di 100 ms.
+
+La correzione è **una riga**: propagare $V_{rif}$ a tutta la flotta in feedforward, così che $\sum_i V_{rif,i} = N v_{cruise}$ e $v_f = v_{cruise}$. È esattamente ciò che fa la Fase 2, dove infatti il fenomeno non si presenta. L'alternativa strutturale è il consenso del secondo ordine, in cui ogni agente ha una propria posizione desiderata e il Master smette di essere un punto singolo di guasto.
 
 
 ## 4. Figure Prodotte
 
-L'esecuzione di `main4.m` genera la cartella `fase_4/risultati/` con otto figure. Le prime quattro replicano quelle di Fase 2, con nomenclatura coerente; le successive sono specifiche di questa fase.
+L'esecuzione di `main4.m` genera la cartella `fase_4/risultati/` con otto figure, con la stessa nomenclatura della Fase 3 per consentire il confronto diretto fra le due configurazioni.
 
 | File | Contenuto |
 |---|---|
@@ -272,10 +276,10 @@ Valori medi di $\text{tr}(\Sigma_{pos})$ misurati (seed 7, transitorio escluso):
 | V2 (Slave, GPS standard) | 0.0968 m² | 0.0132 m² | **7.3× migliore** |
 | V3 (Slave, GPS standard) | 0.0977 m² | 0.0134 m² | **7.3× migliore** |
 
-Il Master, che dispone di GPS RTK, subisce un lieve peggioramento entrando in zona cieca. Gli Slave, che montano GPS standard, registrano invece un **miglioramento di oltre sette volte**: con cinque ancore ben distribuite il ranging UWB a $\sigma = 0.5$ m porta più informazione di un GPS a $\sigma = 2.0$ m. È la quantificazione, sul piano della covarianza, del risultato già riportato al §3.3 in termini di errore.
+Il Master, che dispone di GNSS RTK a 5 Hz, resta pressoché indifferente all'ingresso in zona cieca. Gli Slave, con NEO-M8N a 1 Hz, registrano invece un **miglioramento di 27 volte** sulla traccia della covarianza (0.332 contro 0.0124 m²): con cinque ancore ben distribuite il ranging UWB a $\sigma = 0.5$ m e 10 Hz porta molta più informazione di un GNSS a $\sigma = 2.0$ m e 1 Hz. È la quantificazione, sul piano della covarianza, del risultato riportato al §1.6 in termini di errore.
 
 ### 4.3 Grafo di comunicazione (figura 7)
-La legge di consenso è pesata dalla matrice di **adiacenza** del grafo, e non più applicata indiscriminatamente a tutti i veicoli. Il raggio di comunicazione coincide con `r_collab` = 120 m, la portata del ranging inter-veicolare: è la stessa radio UWB a fornire sia la misura di distanza sia il canale dati, quindi non avrebbe senso che il consenso raggiungesse un vicino con cui il ranging è impossibile.
+La legge di consenso è pesata dalla matrice di **adiacenza** del grafo. Il raggio di comunicazione coincide con `r_collab` = **55 m**, la portata del ranging inter-veicolare: è la stessa radio UWB a fornire sia la misura di distanza sia il canale dati, quindi non avrebbe senso che il consenso raggiungesse un vicino con cui il ranging è impossibile. La riduzione da 120 a 55 m rispetto alla Fase 3 è motivata al §1.1.
 
 | Grandezza | Valore misurato |
 |---|---|

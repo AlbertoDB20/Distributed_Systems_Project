@@ -55,7 +55,7 @@ $Q$ rappresenta rumore **accumulato in un intervallo di tempo**. Raddoppiando l'
 
 L'analogia: è come dire *"perdo 1 cm di precisione a ogni misura"* invece che *"al secondo"*. Se misuri più spesso non peggiori — ma questa formulazione afferma di sì.
 
-Ed è un problema bloccante per la Fase 4, che è multi-rate per definizione.
+Ed è il prerequisito della Fase 4, dove il GNSS scende sotto la frequenza del passo e la sua decimazione non deve ritarare il filtro in silenzio.
 
 ### Errore B — la struttura diagonale afferma una cosa falsa
 

@@ -30,6 +30,8 @@ fase_1/ ... fase_4/         una cartella per fase, ciascuna con:
   mainN.m                      script di simulazione
   READMEN.md                   documentazione della fase
   risultati/                   figure generate dallo script
+  genera_ambiente.m            (fasi 3 e 4) mappa, zone cieche, ancore UWB
+  ambiente_faseN.mat           ambiente generato, caricato da mainN.m
 exam/                        regole d'esame e template del report
 ```
 
@@ -61,18 +63,21 @@ I parametri sono tarati su un mezzo battipista di classe reale (PistenBully 600,
 | Velocità massima | $v_{max}$ | 5.0 m/s | $\approx$ 18 km/h, trasferimento |
 | Velocità di lavoro | $v_{cruise}$ | 2.5 m/s | $\approx$ 9 km/h, battitura |
 | Velocità angolare massima | $\omega_{max}$ | 0.6 rad/s | raggio di sterzata minimo $\approx$ 4 m |
-| Frequenza di campionamento | $f_s$ | 10 Hz | uniforme fino alla Fase 4 |
-| Distanze inter-veicolari nominali | $d_{ij}$ | 36-40 m | formazione a "V" |
+| Frequenza del passo di simulazione | $f_s$ | 10 Hz | in tutte le fasi |
+| Numero di veicoli | $N$ | 3, poi 5 dalla Fase 4 | 1 Master + Slave |
+| Distanze inter-veicolari nominali | $d_{ij}$ | 36-40 m (fino a 80 m in Fase 4) | formazione a "V" |
 | Soglia di sicurezza | $d_{safe}$ | 15 m | ingombro fisico + margine |
-| Raggio di comunicazione inter-veicolare | $r_{collab}$ | 120 m | link UWB in vista ottica |
+| Raggio di comunicazione inter-veicolare | $r_{collab}$ | 120 m, **55 m in Fase 4** | vedi §3.3 |
 | Raggio di visibilità ancora UWB | $r_{ancora}$ | 150 m | portata DW1000 derata (vedi §2.2) |
 | Numero di ancore UWB | $n_{ancore}$ | 5 | posizionate via ottimizzazione GDOP |
-| $\sigma$ GPS RTK / standard | | 0.2 / 2.0 m | Master / Slave |
-| $\sigma$ magnetometro / giroscopio | | 0.05 rad / 0.02 rad/s | |
-| $\sigma$ encoder | | 0.1 rad/s | |
+| $\sigma$ GNSS RTK / standard | | 0.2 / 2.0 m | Master / Slave, vedi §2.2 |
+| $\sigma$ AHRS (heading / giroscopio) | | 0.05 rad / 0.02 rad/s | |
+| $\sigma$ velocità cingoli | | 0.1 rad/s | |
 | $\sigma$ ranging UWB (ancora fissa / veicolo) | | 0.5 / 0.6 m | vedi §2.2 |
 
-**La scala della formazione non è una scelta estetica.** Le zone GPS-denied hanno raggio 65 m: con distanze inter-veicolari di pochi metri l'intera flotta condivide sempre la stessa condizione di copertura, e lo scenario centrale del progetto — un veicolo cieco ancorato da un vicino che vede ancora i satelliti — non si verifica mai. Portando la formazione alla scala reale dei mezzi la condizione di copertura mista passa dal 5.4% al 23.3% del tempo di missione. Analogamente, i guadagni di controllo non sono trasferibili fra scale diverse: il gradiente del potenziale repulsivo scala come $1/d^3$, quindi $k_{rep}$ viene ricavato per inversione da un requisito di progetto anziché fissato a un numero.
+Le frequenze dei singoli sensori sono uniformi a 10 Hz fino alla Fase 3; dalla Fase 4 ciascuno opera alla propria cadenza reale (§2.2).
+
+**La scala della formazione non è una scelta estetica.** Le zone GPS-denied hanno raggio 65 m: con distanze inter-veicolari di pochi metri l'intera flotta condivide sempre la stessa condizione di copertura, e lo scenario centrale del progetto — un veicolo cieco ancorato da un vicino che vede ancora i satelliti — non si verifica mai. Portando la formazione alla scala reale dei mezzi la condizione di copertura mista passa dal 5.4% al 23.3% del tempo di missione, e al 37.9% con la formazione a cinque della Fase 4, profonda 60 m. Analogamente, i guadagni di controllo non sono trasferibili fra scale diverse: il gradiente del potenziale repulsivo scala come $1/d^3$, quindi $k_{rep}$ viene ricavato per inversione da un requisito di progetto anziché fissato a un numero.
 
 ---
 
@@ -83,7 +88,7 @@ La stima dello stato locale di ogni veicolo è affidata a un **Extended Kalman F
 
 1. **La non linearità è debole sulla scala dell'incertezza.** È questo il criterio che conta: non quanto una funzione curva in assoluto, ma quanto curva entro $\pm 3\sigma$. Nel modello di moto l'errore di linearizzazione vale $\tfrac{1}{2}vT_s\sigma_\theta^2 \approx 8\cdot10^{-6}$ m per passo, contro un rumore di processo di $4.5\cdot10^{-2}$ m: **tre ordini di grandezza sotto**. Per le misure di distanza UWB il rapporto è analogo — $4\cdot10^{-4}$ m contro $\sigma_{uwb} = 0.5$ m — perché il veicolo opera a decine o centinaia di metri dalle ancore con incertezza decimetrica. EKF e UKF darebbero qui risultati indistinguibili, e l'UKF pagherebbe 11 propagazioni più una fattorizzazione di Cholesky per passo.
 2. **Gli Jacobiani servono comunque altrove:** per il Gramiano di osservabilità e per il calcolo del peso $\gamma$ nella Covariance Intersection.
-3. **Costo computazionale in un contesto distribuito.** L'architettura deve scalare a $N$ agenti e alle frequenze reali della Fase 4, dove un'IMU può operare a 100–200 Hz. Il rapporto di costo fra le due soluzioni è di circa 5–10×.
+3. **Costo computazionale in un contesto distribuito.** L'architettura deve scalare a $N$ agenti e alle frequenze reali dei sensori: l'AHRS della Fase 4 lavora internamente a 100 Hz, e un'IMU grezza arriva a 400 Hz. Il rapporto di costo fra le due soluzioni è di circa 5–10×.
 4. **Misure a dimensione variabile.** La matrice $C$ cambia dimensione a runtime — GPS disponibile o negato, numero variabile di ancore e di vicini in portata. Con l'EKF si accodano righe; con l'UKF andrebbe rieseguita la trasformata unscented sulla funzione di misura a ogni cambio di configurazione.
 5. **Nessun parametro di taratura.** L'UKF richiede di scegliere e giustificare $\alpha$, $\beta$, $\kappa$; l'EKF non ha manopole.
 
@@ -109,7 +114,19 @@ Il posizionamento delle $n_{ancore} = 5$ ancore fisse non è casuale: viene otti
 
 Si adotta $r_{ancora} = 150$ m: la portata nominale del DW1000 derata di circa un fattore 2 per attenuazione da precipitazione nevosa, ostruzioni parziali del terreno (NLOS) e margine sul Packet Error Rate. Le ancore si assumono montate su palo (3–4 m), poiché la letteratura sperimentale mostra che l'errore di ranging cresce marcatamente al ridursi dell'altezza d'antenna.
 
-I due valori di rumore di ranging riflettono questa asimmetria: $\sigma_{uwb} = 0.5$ m verso ancora fissa (posizione rilevata una volta per tutte, antenna elevata, buona vista ottica) contro $\sigma_{collab} = 0.6$ m fra veicoli. La differenza **non** è dovuta al moto — lo spostamento durante uno scambio TW-TOF di circa 1 ms a 2.5 m/s vale millimetri — ma all'antenna più bassa montata sul mezzo e all'effetto della piattaforma metallica, che nel link inter-veicolare è presente su *entrambi* i terminali anziché su uno solo.
+I due valori di rumore di ranging riflettono questa asimmetria: $\sigma_{uwb} = 0.5$ m verso ancora fissa (posizione rilevata una volta per tutte, antenna elevata, buona vista ottica) contro $\sigma_{collab} = 0.6$ m fra veicoli. La differenza **non** è dovuta al moto — lo spostamento durante uno scambio TW-TOF di circa 1 ms a 2.5 m/s vale millimetri — ma all'antenna più bassa montata sul mezzo e all'effetto della piattaforma metallica, che nel link inter-veicolare è presente su *entrambi* i terminali anziché su uno solo. La stessa fisica implica anche una **portata inferiore** verso un veicolo che verso un'ancora su palo, ed è la ragione per cui in Fase 4 il raggio inter-veicolare scende a 55 m (§3.3).
+
+**Frequenze native dei sensori.** Fino alla Fase 3 tutti i sensori campionano a 10 Hz. Dalla Fase 4 ciascuno opera alla propria cadenza, riferita a componenti reali del settore off-highway:
+
+| Sensore | Modello | Frequenza nativa | Trattamento a 10 Hz |
+|---|---|---|---|
+| AHRS (heading, giroscopio) | Xsens MTi-3 | 100 Hz interni | letto a 10 Hz, $\sigma$ di targa invariata |
+| Velocità cingoli | sensore Hall sul pignone | conteggio impulsi | finestra di 100 ms = il passo |
+| Ranging | Qorvo DW1000 | ~1 ms per scambio | 9 scambi = 9 ms, sta nel passo |
+| GNSS Master | u-blox ZED-F9P (RTK) | fino a 20 Hz, usato a 5 Hz | 1 fix ogni 2 passi |
+| GNSS Slave | u-blox NEO-M8N | 1 Hz | 1 fix ogni 10 passi |
+
+L'AHRS non va riscalato perché filtra internamente e restituisce un assetto già elaborato; gli encoder non hanno una frequenza ma una finestra di integrazione, che coincide con il passo. **Il solo GNSS è più lento del passo e va decimato**: campionarlo a 10 Hz equivarrebbe a dichiarare un ricevitore migliore di quello montato ($\sigma_{eff} = 0.63$ m anziché 2.0 per un NEO-M8N a 1 Hz). Dettaglio e conseguenze in [fase_4/README4.md §1.4](fase_4/README4.md).
 
 ### 2.3 Fusione Decentralizzata e Covariance Intersection
 Essendo un progetto di Sistemi Distribuiti, non esiste un'unità di calcolo centrale. I veicoli comunicano tra loro scambiandosi le proprie stime di posa. Se un veicolo perde il GPS ma un suo vicino lo mantiene, il sistema sfrutta la distanza UWB e lo scambio dati per correggere la traiettoria del veicolo "cieco".
@@ -146,7 +163,9 @@ I blocchi 2-3 e 4-5 sono implementati come due passate distinte sull'intera flot
 
 > **Schema temporale completo** — che cosa accade dentro un intervallo $T_s$, le due scale dei tempi (controllo a 10 Hz, radio a ~1 kHz), la mappa fra iterazione del codice e istante fisico, e il budget degli scambi radio: [theory/TEORIA_ciclo_temporale.md](theory/TEORIA_ciclo_temporale.md).
 
-**Ritardo di un passo sulle stime scambiate.** La posizione di un vicino usata come ancora mobile è la sua stima $\hat{x}_k^{(j)}$ — l'ultimo pacchetto ricevuto — propagata di un passo con il modello di moto, ottenendo $\hat{x}_{k+1|k}^{(j)}$. La scelta risponde a due esigenze: rompe il loop algebrico fra filtri che altrimenti dipenderebbero l'uno dalla stima aggiornata dell'altro nel medesimo istante, e rispecchia ciò che un canale di comunicazione reale rende effettivamente disponibile. La propagazione è necessaria perché confrontare una misura acquisita a $t_{k+1}$ con una posizione riferita a $t_k$ reintrodurrebbe lo stesso bias di $|v_j| T_s$ descritto sopra.
+**Ritardo sulle stime scambiate.** La posizione di un vicino usata come ancora mobile è la sua stima $\hat{x}_k^{(j)}$ — l'ultimo pacchetto ricevuto — propagata in avanti con il modello di moto. La scelta risponde a due esigenze: rompe il loop algebrico fra filtri che altrimenti dipenderebbero l'uno dalla stima aggiornata dell'altro nel medesimo istante, e rispecchia ciò che un canale reale rende effettivamente disponibile. La propagazione è necessaria perché confrontare una misura acquisita a $t_{k+1}$ con una posizione riferita a $t_k$ reintrodurrebbe lo stesso bias di $|v_j| T_s$ descritto sopra.
+
+Fino alla Fase 3 il ritardo vale **un passo fisso**. In **Fase 4** il canale diventa non ideale: ritardo variabile fra 0 e 200 ms e 0.5% di pacchetti persi, che si compongono nell'*età* del dato usato. Non serve il *timestamping* con reinserimento retroattivo nel buffer: il progetto ha ritardo sulla **posa dell'ancora**, non misure fuori sequenza del proprio stato, e la storia delle stime è già in `fleet(j).x_est` — ricevere con ritardo significa leggerla più indietro. Argomento completo in [fase_4/README4.md §1.5](fase_4/README4.md).
 
 ### 2.5 Rumore di Processo: formulazione CWNA
 
@@ -247,7 +266,7 @@ la media con i vicini tramite il consenso a pesi di Metropolis, e ricostruisce $
 
 **Un solo ciclo di consenso è sufficiente**, perché su $K_3$ la regola di Metropolis dà $\rho_2 = 0$: il risultato spettrale del §3.1 si traduce in un costo di comunicazione di un singolo scambio per round, cioè il 2% del budget disponibile. Il guadagno della cooperazione non è uniforme — il Master, che ha sia il sensore migliore sia la maggiore escursione di velocità, da solo arriverebbe quasi dove arriva la rete. Ciò che la rete produce è la **distribuzione a tutti della qualità del membro meglio strumentato**, la stessa struttura del GPS RTK montato sul solo Master.
 
-> Trattazione completa — derivazione passo per passo secondo il Cap. 18, ruolo della doppia stocasticità, connettività congiunta su topologia tempo-variante, limiti noti (regressore incerto, eccitazione insufficiente, assenza di dimenticanza): [theory/TEORIA_stima_distribuita.md](theory/TEORIA_stima_distribuita.md). Risultati e figura: [fase_3/README3.md §4.6](fase_3/README3.md).
+> Trattazione completa — derivazione passo per passo secondo il Cap. 18, ruolo della doppia stocasticità, connettività congiunta su topologia tempo-variante, limiti noti (regressore incerto, eccitazione insufficiente, assenza di dimenticanza): [theory/TEORIA_stima_distribuita.md](theory/TEORIA_stima_distribuita.md). Risultati e figura: [fase_3/README3.md §4.6](fase_3/README3.md) e [fase_4/README4.md §4.6](fase_4/README4.md).
 
 ---
 
@@ -286,13 +305,21 @@ Il passaggio dalla forma matriciale al codice comporta una scelta architetturale
 
 Le proprietà spettrali sono validate in `common/verifica_grafo.m`: invarianza $L\mathbf{1} = 0$ a precisione di macchina, $\lambda_2(L) = n$ sul grafo completo $K_n$, doppia stocasticità della $Q$ di Metropolis, coincidenza di $\mathrm{mol}_{\lambda_1}(Q)$ e $\mathrm{mol}_{\lambda_1}(L)$ su ogni topologia, e **predittività di $\rho_2$** — su grafo a catena il tasso di decadimento misurato coincide con quello previsto entro $2.3\cdot10^{-15}$. Su grafo sconnesso entrambi gli indicatori segnalano la mancata convergenza ($\lambda_2(L) = 0$, $\rho_2 = 1$).
 
-Le Fasi 2, 3 e 4 registrano a ogni passo l'intero spettro $\lambda_i(Q)$, la connettività $\lambda_2(L)$ e il numero di archi attivi, riportati nelle figure `fase_2/risultati/5_grafo_comunicazione.png` e `fase_3/risultati/7_grafo_comunicazione.png`. La topologia diventa così una grandezza osservabile della simulazione anziché un'ipotesi implicita, e la costante di tempo prevista $\tau = 2.22$ s trova riscontro nel transitorio di formazione di Fase 2.
+Le Fasi 2, 3 e 4 registrano a ogni passo l'intero spettro $\lambda_i(Q)$, la connettività $\lambda_2(L)$ e il numero di archi attivi, riportati nelle figure `5_grafo_comunicazione.png` (Fase 2) e `7_grafo_comunicazione.png` (Fasi 3 e 4). La topologia diventa così una grandezza osservabile della simulazione anziché un'ipotesi implicita, e la costante di tempo prevista $\tau = 2.22$ s trova riscontro nel transitorio di formazione di Fase 2.
 
 ### 3.3 Vincolo di portata radio
 
-Il grafo è vincolato dal raggio di comunicazione: in Fase 2 il canale è ideale ($R_c = \infty$, grafo completo per costruzione), in Fase 3 $R_c$ coincide con la portata UWB `r_collab` = 120 m, poiché è la stessa radio a fornire sia la misura di distanza sia il canale dati. Le distanze inter-veicolari raggiungono al massimo 41.7 m, il 35% del raggio disponibile: il grafo resta connesso per l'intera missione. Il margine diventa critico nelle fasi successive, quando latenze e perdite di pacchetto renderanno la topologia tempo-variante.
+Il grafo è vincolato dal raggio di comunicazione, che coincide con la portata UWB `r_collab`: è la stessa radio a fornire sia la misura di distanza sia il canale dati.
 
-L'adiacenza pesa il **solo** termine di consenso; la repulsione anti-collisione non è pesata dal grafo. La distinzione è priva di conseguenze operative, ed è un requisito di progetto che lo sia: la repulsione richiede la **direzione** della congiungente e non la sola distanza, e la direzione si ricava unicamente dal pacchetto radio — un sensore di ranging da solo non la fornisce. In assenza di collegamento non sarebbe quindi calcolabile in alcun modo. La sicurezza è garantita dalla gerarchia dei raggi d'azione, $d_{safe} = 15$ m $\ll R_c = 120$ m: il canale dati è attivo ben prima che due mezzi entrino in rotta di collisione. La condizione è un invariante di progetto, imposto da un `assert` in fase di inizializzazione in entrambe le fasi.
+| | $R_c$ | Grafo | $\lambda_2(L)$ | $\rho_2$ |
+|---|---|---|---|---|
+| Fase 2 | $\infty$ (canale ideale) | $K_3$ completo | 3.000 | 0.000 |
+| Fase 3 | 120 m | $K_3$ completo, $d_{max} = 41.7$ m | 3.000 | 0.000 |
+| Fase 4 | **55 m** | 5 archi su 10 | **0.697** | **0.826** |
+
+Fino alla Fase 3 il raggio supera di tre volte l'estensione della formazione e il grafo è completo per costruzione: l'analisi spettrale è corretta ma inerte. In **Fase 4** il raggio scende a 55 m — coerentemente con la fisica dell'antenna già argomentata in §2.2 — e cinque coppie su dieci non si vedono più. Le distanze nominali si separano in due gruppi netti, 36-40 m e 67-80 m, con un vuoto di 27 m in mezzo: la topologia resta deterministica con un margine del +35% sui link attivi e del −17% su quelli assenti.
+
+L'adiacenza pesa il **solo** termine di consenso; la repulsione anti-collisione non è pesata dal grafo. La distinzione è priva di conseguenze operative, ed è un requisito di progetto che lo sia: la repulsione richiede la **direzione** della congiungente e non la sola distanza, e la direzione si ricava unicamente dal pacchetto radio — un sensore di ranging da solo non la fornisce. In assenza di collegamento non sarebbe quindi calcolabile in alcun modo. La sicurezza è garantita dalla gerarchia dei raggi d'azione, $d_{safe} = 15$ m $\ll R_c = 120$ m: il canale dati è attivo ben prima che due mezzi entrino in rotta di collisione. La condizione è un invariante di progetto, imposto da un `assert` in fase di inizializzazione in tutte le fasi che la usano.
 
 > Trattazione completa — matrici stocastiche e doppiamente stocastiche, proprietà spettrali del Laplaciano, teorema dello spanning tree, progettazione dei pesi e validazione numerica: [theory/TEORIA_consenso_su_grafi.md](theory/TEORIA_consenso_su_grafi.md).
 
@@ -312,9 +339,13 @@ Per garantire la solidità dell'impianto teorico, lo sviluppo in ambiente MATLAB
 * **Fase 3: L'Ambiente Ostile.** Si introduce il realismo ambientale. Vengono create zone *GPS-denied* casuali lungo il percorso e si posizionano le ancore UWB calcolando la GDOP ottimale. Si testa la resilienza della flotta: il sistema deve dimostrare di poter attraversare le zone cieche mantenendo la formazione, affidandosi alla triangolazione UWB e alla localizzazione collaborativa. In questa fase si innesta anche il **D-WLS** per l'identificazione collaborativa del parametro di terreno (§2.7), primo algoritmo del progetto in cui la matrice di consenso di Metropolis entra in funzione anziché servire da diagnostica.
 * **Fase 4: Realismo dei Sistemi Distribuiti.** Le assunzioni ideali cadono una alla volta.
   1. **Grafo non completo** (*fatto*). La flotta sale a $N = 5$ e il raggio inter-veicolare scende a 55 m, coerentemente con la fisica già argomentata in §2.2: antenne più basse ed effetto piattaforma su entrambi i capi del link implicano una portata minore, non solo un rumore maggiore. Cinque coppie su dieci non si vedono, e le grandezze spettrali smettono di essere decorative — $\lambda_2(L)$ passa da 3.000 a 0.697, $\rho_2$ da 0 a 0.826, il diametro da 1 a 3 salti. Il consenso del D-WLS richiede ora **49 cicli su 50 disponibili** anziché uno solo, e $K_{cons}$ va ritarato da 0.15 a 0.646 per tenere $\tau$ invariato: è $\lambda_2(L)$ usato come parametro di progetto e non come indicatore. Dettagli in [fase_4/README4.md](fase_4/README4.md).
-  2. **Multi-rate.** I sensori operano alle frequenze reali: IMU veloce, GPS lento. È il punto in cui la scalatura di $Q$ su $T_s$ (§2.5) diventa indispensabile.
-  3. **Latenze e timestamping.** Il canale introduce ritardi variabili, e le letture in ritardo vanno reinserite retroattivamente nel buffer storico dell'EKF per non destabilizzare il filtro.
-  4. **GPS uniforme.** Si rimuove l'asimmetria Master/Slave sul GPS, rendendo la perdita di segnale dipendente esclusivamente dalla posizione spaziale.
+  2. **Frequenze reali dei sensori** (*fatto*). Il passo resta 10 Hz, ma ogni sensore è trattato per quello che è: l'AHRS Xsens MTi-3 filtra internamente a 100 Hz e si legge senza penalità, il sensore Hall sui cingoli integra su una finestra che coincide col passo, il ranging DW1000 chiude in 9 ms. **Il solo GNSS è più lento del passo** e va decimato — ZED-F9P a 5 Hz per il Master, NEO-M8N a 1 Hz per gli Slave — perché campionarlo a 10 Hz equivarrebbe a dichiarare un ricevitore tre volte migliore. Conseguenza: gli Slave passano il 90% dei passi in sola predizione a cielo aperto, e il loro errore sale da 0.19-0.21 a 0.31-0.39 m, mentre **in zona cieca non cambia nulla** perché là il riferimento è l'UWB a 10 Hz. Il divario "meglio al buio che a cielo aperto" passa da un fattore 2 a un fattore 4.
+  3. **Latenza e perdita di pacchetti** (*fatto*). Ritardo gaussiano troncato in $[0, 200]$ ms e 0.5% di pacchetti persi sul broadcast delle pose. Le due cose si compongono nell'**età** del dato usato: 100 ms in media, 400 ms al massimo, cioè il 18% e il 71% del margine di stabilità del consenso, $\pi/(2K_{cons}\lambda_{max}(L)) = 565$ ms.
+
+     **Il timestamping non serve**, e non è una scorciatoia. Vanno distinti due ritardi: la *posa dell'ancora vecchia*, dove la misura di distanza è fresca e solo la posizione del vicino è stale — si rimedia propagandola in avanti col modello di moto; e la *misura fuori sequenza*, una misura del proprio stato presa nel passato che arriva adesso, che richiederebbe di tornare indietro nel buffer e ri-propagare. Il progetto ha solo il primo caso, perché nessun veicolo trasmette misure altrui. Il buffer, per giunta, esiste già: `fleet(j).x_est` è la storia completa delle stime, e ricevere con ritardo significa leggerla più indietro.
+
+     Effetto misurato: il ritardo costa **velocità, non accuratezza** — la missione si allunga del 13% perché il consenso agisce su errori vecchi di 100 ms, il che equivale a ridurre il guadagno d'anello. Lo 0.5% di perdita è invece invisibile: alza l'età media di 0.005 passi.
+  4. **GPS uniforme** (*da fare*). L'asimmetria di *disponibilità* è già puramente spaziale in tutte le fasi: `in_denied` si valuta sulla posizione reale contro le zone d'ombra. Resta l'asimmetria di *qualità*, $\sigma = 0.2$ per il Master contro 2.0 per gli Slave. Uniformarla è facoltativo e ha un costo: il risultato "gli Slave stimano meglio al buio che a cielo aperto" esiste proprio perché $\sigma_{gps} \gg \sigma_{uwb}$.
 * **Fase 5: Realismo Off-Highway (Modellazione dello Slittamento).** Si rimuove l'assunzione di aderenza ideale, finora implicita nel fatto che la velocità reale del veicolo coincide istante per istante con quella comandata. Viene introdotto un modello di slittamento rappresentativo delle condizioni operative di un mezzo cingolato su fondo nevoso, basato su uno studio già disponibile in letteratura sulla trazione di veicoli cingolati su terreni a bassa aderenza, sviluppato presso l'Università degli Studi di Trento. La fase comporta tre interventi sull'architettura:
   1. **Impianto.** La generazione della ground truth passa da `x_true(4,k+1) = v_cmd` a una legge $v^{true} = f_{slip}(v_{cmd}, x^{true}, \text{terreno})$. Il punto di innesto è già predisposto e marcato nel codice di Fase 2 e Fase 3.
   2. **Modello di misura degli encoder.** È la conseguenza più critica. Il modello attuale $z_{enc} = \left[\frac{v}{r}+\frac{L\omega}{2r},\; \frac{v}{r}-\frac{L\omega}{2r}\right]^T$ presuppone rotolamento puro. In presenza di slittamento gli encoder misurano la velocità dei *cingoli*, non quella del veicolo: la relazione fra le due si carica di un errore **sistematico**, non di un rumore bianco. Poiché gli encoder sono l'osservatore primario di $v$ e $\omega$, un modello di misura polarizzato degraderebbe l'intero filtro. Occorre decidere se assorbire lo slittamento gonfiando $R_{enc}$ (soluzione minima ma statisticamente scorretta, un bias non è rumore), oppure introdurlo esplicitamente in $h(\cdot)$ tramite parametri di slittamento stimati.
@@ -327,5 +358,5 @@ Per garantire la solidità dell'impianto teorico, lo sviluppo in ambiente MATLAB
 
      Solo l'aggiornamento collaborativo richiede la CI: GPS, IMU ed encoder sono genuinamente indipendenti dalle stime dei vicini e restano su guadagno di Kalman standard — architettura nota come *Split Covariance Intersection*.
 
-  Il punto 4 è indipendente dal modello di slittamento e potrebbe essere anticipato; è collocato qui perché la Fase 4 ridefinisce comunque il protocollo di comunicazione introducendo latenze e timestamp, e conviene modificare il formato del pacchetto una volta sola.
-* **Fase 6: Validazione.** Il modello viene sottoposto a perdite stocastiche di pacchetti di rete (*packet loss*). La validazione finale del progetto includerà la creazione di grafici, in particolare l'analisi della consistenza del filtro tramite i *3-sigma bounds*, confrontando l'errore di stima reale rispetto alla covarianza teorica calcolata dal sistema distribuito.
+  Il punto 4 è indipendente dal modello di slittamento e potrebbe essere anticipato; è collocato qui perché conviene modificare il formato del pacchetto una volta sola, e perché lo slittamento è ciò che rende l'incertezza dei vicini variabile nel tempo e quindi non più trascurabile.
+* **Fase 6: Validazione.** Le perdite di pacchetto salgono dallo 0.5% della Fase 4 a valori che frammentano davvero la topologia, e si estendono ai cicli di consenso del D-WLS, oggi ancora ideali. È il regime in cui il grafo diventa tempo-variante e va riletto in termini di **connettività congiunta** (Teorema 17): la rete può essere disconnessa a ogni singolo istante e sostenere ugualmente il consenso, purché nel tempo i collegamenti coprano l'intera flotta. La validazione finale include l'analisi di consistenza del filtro tramite *3-sigma bounds* e test NEES su campagna Monte Carlo, confrontando l'errore di stima reale con la covarianza dichiarata dal sistema distribuito.

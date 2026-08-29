@@ -44,7 +44,8 @@ Uno scambio TW-TOF su DW1000 dura circa 1 ms. In un solo passo di controllo il c
    (4b) TORSIOMETRO    |--> z_traz(k), poi F_loc += C'R^-1 C
                        |                     a_loc += C'R^-1 z
                        |
-   (1) BROADCAST       |--> pubblica p_ctrl(k) e la posa propagata      ~3 scambi
+   (1) BROADCAST       |--> pubblica p_ctrl(k); i vicini lo ricevono con     ~N scambi
+                       |    ritardo, e a volte non lo ricevono affatto
                        |    costruisce il grafo G(k) dalla portata radio
                        |
    (6) D-WLS           |--> q cicli di consenso su (F_loc, a_loc)       q <= 50 scambi
@@ -68,7 +69,7 @@ Uno scambio TW-TOF su DW1000 dura circa 1 ms. In un solo passo di controllo il c
 | (4) Sensori | $x^{true}_k$ | $z_k$ | $t_k$ |
 | (5) Stima | $\hat x_{k-1}$, $\Sigma_{k-1}$, $z_k$ | $\hat x_k$, $\Sigma_k$ | $t_k$ |
 | (4b) Torsiometro | $x^{true}_k$, $\hat v_k$ | $F_i$, $a_i$ | $t_k$ |
-| (1) Broadcast | $\hat x_k$ | `p_ctrl`, `p_ancora_mobile`, $G$ | $t_k$ |
+| (1) Broadcast | $\hat x_k$ | `p_ctrl`, viste ritardate dei vicini, $G$ | $t_k$ |
 | (6) D-WLS | $F_i$, $a_i$, $G$ | $\hat x_{terr}$ | $t_k$ |
 | (2) Controllo | $\hat x_k$, stime dei vicini | $u_k$ | $t_k$ |
 | (3) Impianto | $x^{true}_k$, $u_k$ | $x^{true}_{k+1}$ | $[t_k, t_{k+1})$ |
@@ -79,7 +80,7 @@ Nessun blocco legge una grandezza riferita a un istante successivo al proprio. �
 
 ## 4. Come l'Iterazione del Codice si Mappa sull'Istante
 
-Il ciclo `for k = 1:N_steps-1` di `main3.m` **non coincide** con l'istante $t_k$: è sfalsato di mezzo passo, e questa è la sola vera insidia di lettura del codice.
+Il ciclo `for k = 1:N_steps-1` degli script di simulazione **non coincide** con l'istante $t_k$: è sfalsato di mezzo passo, e questa è la sola vera insidia di lettura del codice.
 
 ```
    iterazione k-1                iterazione k                 iterazione k+1
@@ -120,7 +121,7 @@ Metà del passo è riservata al D-WLS, l'altra metà a tutto il resto.
 
 | Traffico | Scambi | Tempo |
 |---|---|---|
-| Broadcast delle pose | ~3 | ~3 ms |
+| Broadcast delle pose | ~$N$ | ~5 ms |
 | Ranging verso le ancore | fino a 5 | ~5 ms |
 | Ranging inter-veicolare | 2 | ~2 ms |
 | Cicli di consenso D-WLS | $q \le 50$ | $\le 50$ ms |
@@ -130,15 +131,21 @@ Il numero di cicli $q$ non è fissato a mano ma dimensionato da $\rho_2$ e dal d
 
 ---
 
-## 7. Il Ritardo di un Passo sulle Stime Scambiate
+## 7. L'Età del Dato Scambiato
 
-La posizione di un vicino usata come ancora mobile è la sua stima $\hat x_k^{(j)}$ — l'ultimo pacchetto ricevuto — **propagata di un passo** con il modello di moto:
+La posizione di un vicino usata come ancora mobile è la sua stima $\hat x^{(j)}$ contenuta nell'**ultimo pacchetto ricevuto**, propagata in avanti con il modello di moto fino a $t_{k+1}$:
 
-$$\hat p_{k+1|k}^{(j)} = \hat p_k^{(j)} + \hat v_k^{(j)} \begin{bmatrix}\cos\hat\theta_k^{(j)} \\ \sin\hat\theta_k^{(j)}\end{bmatrix} T_s$$
+$$\hat p_{k+1}^{(j)} = \hat p_{k-\eta}^{(j)} + \hat v_{k-\eta}^{(j)} \begin{bmatrix}\cos\hat\theta_{k-\eta}^{(j)} \\ \sin\hat\theta_{k-\eta}^{(j)}\end{bmatrix} (\eta+1)\,T_s$$
 
-Due ragioni. La prima è strutturale: rompe il **loop algebrico** fra filtri che altrimenti dipenderebbero l'uno dalla stima aggiornata dell'altro nel medesimo istante. La seconda è di realismo: è ciò che un canale reale rende effettivamente disponibile.
+dove $\eta$ è l'**età** del pacchetto in passi. Fino alla Fase 3 vale $\eta = 0$, cioè un passo di propagazione; in Fase 4 diventa variabile, perché somma il ritardo di consegna e i passi trascorsi dall'ultimo pacchetto arrivato.
 
-La propagazione è necessaria perché confrontare una misura acquisita a $t_{k+1}$ con una posizione riferita a $t_k$ reintrodurrebbe lo stesso bias di $|v_j|T_s$ descritto al §5.
+Due ragioni per propagare. La prima è strutturale: rompe il **loop algebrico** fra filtri che altrimenti dipenderebbero l'uno dalla stima aggiornata dell'altro nel medesimo istante. La seconda è di coerenza: confrontare una misura acquisita a $t_{k+1}$ con una posizione riferita a un istante precedente reintrodurrebbe lo stesso bias di $|v_j|T_s$ per passo descritto al §5.
+
+**Il consenso di formazione non propaga.** Usa il dato ricevuto così com'è, ed è una scelta: è la condizione in cui vale il limite di stabilità classico per il consenso con ritardo,
+
+$$\tau_d < \frac{\pi}{2\,K_{cons}\,\lambda_{max}(L)}$$
+
+che per la topologia della Fase 4 vale 565 ms. Con un'età media di 100 ms se ne consuma il 18%, con il picco di 400 ms il 71%.
 
 ---
 
@@ -146,9 +153,13 @@ La propagazione è necessaria perché confrontare una misura acquisita a $t_{k+1
 
 Lo schema qui descritto vale finché reggono due ipotesi, entrambe destinate a cadere.
 
-**Sincronismo dei sensori.** Oggi IMU, encoder, GPS e UWB campionano tutti a 10 Hz. In **Fase 4** operano alle frequenze reali — un'IMU può arrivare a 100–200 Hz, un GPS sta sotto i 10 Hz — e il blocco (4) si sfalda in più sotto-blocchi a cadenze diverse. È il motivo per cui la $Q$ è stata scritta in forma CWNA, proporzionale a $T_s$: cambiare cadenza non deve ritarare il filtro in silenzio.
+**Sincronismo dei sensori** — caduto in Fase 4. Fino alla Fase 3 AHRS, encoder, GNSS e UWB campionano tutti a 10 Hz. Dalla Fase 4 ciascuno opera alla propria cadenza, e si scopre che **un solo sensore è davvero più lento del passo**: il GNSS. L'AHRS filtra internamente a 100 Hz e restituisce un assetto già elaborato, gli encoder integrano su una finestra che coincide col passo, il ranging chiude in 9 ms. Il blocco (4) non si sfalda quindi in sotto-blocchi a cadenze diverse: acquisisce sempre tutto, tranne il fix GNSS che arriva un passo su 2 (Master) o su 10 (Slave).
 
-**Latenza nulla del canale.** Oggi il traffico radio è istantaneo sulla scala del controllo. In **Fase 4** la latenza diventa esplicita e variabile, e serve il *timestamping* delle misure: una lettura in ritardo va reinserita nel punto giusto della storia del filtro. In **Fase 6** si aggiungono le perdite di pacchetto, che rendono la topologia tempo-variante e obbligano a rileggere il consenso in termini di connettività congiunta.
+**Latenza nulla del canale** — caduta in Fase 4. Il ritardo di consegna diventa variabile in $[0, 200]$ ms e si aggiunge lo 0.5% di pacchetti persi; le due cose si compongono nell'**età** del dato usato.
+
+> **Non serve il timestamping**, e non è una semplificazione. Vanno distinti due ritardi. Il primo è la *posa dell'ancora vecchia*: la misura di distanza la fa la propria radio adesso ed è fresca, stale è solo la posizione del vicino usata per predirla — si rimedia propagandola in avanti col modello di moto, che è ciò che il §7 già fa per un passo. Il secondo è la *misura fuori sequenza*, una misura del **proprio** stato presa nel passato che arriva adesso: lì servirebbe tornare indietro nel buffer, applicarla al momento giusto e ri-propagare. Il progetto ha solo il primo caso, perché nessun veicolo trasmette misure altrui. E il buffer esiste già: la storia delle stime è in `fleet(j).x_est`, e ricevere con ritardo significa leggerla più indietro.
+
+**Perdite di pacchetto sul consenso** — resta per la Fase 6. Lo 0.5% della Fase 4 riguarda il solo broadcast delle pose a 10 Hz; i cicli di consenso del D-WLS, che vivono sulla scala del millisecondo, sono ancora ideali. In Fase 6 le perdite si estendono a quel canale e frammentano la topologia, obbligando a rileggere il consenso in termini di **connettività congiunta**.
 
 ---
 
