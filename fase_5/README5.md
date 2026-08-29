@@ -1,156 +1,143 @@
-# Fase 4: Realismo dei Sistemi Distribuiti
+# Fase 5: Fusione Consistente con Covariance Intersection
 
 ## 1. Obiettivo
-La Fase 4 rimuove le assunzioni ideali rimaste nell'architettura, una alla volta. Lo scenario di partenza è quello della Fase 3 — navigazione in zone GPS-denied con ranging UWB, localizzazione collaborativa e stima distribuita del terreno — ma la rete smette di essere una comodità e diventa un vincolo.
+
+La Fase 5 rimuove l'ultima ipotesi ottimistica rimasta nell'architettura di stima: che la posa ricevuta da un vicino sia **esatta**. Lo scenario fisico è identico a quello della Fase 4 — stesso ambiente, stessa flotta, stesso canale — e questo è voluto: l'unica variabile che cambia è la regola di fusione, così l'effetto è isolabile.
 
 | Passo | Contenuto | Stato |
 |---|---|---|
-| **4.0** | Flotta a $N = 5$ con **grafo non completo**: alcuni mezzi non si vedono | **fatto** |
-| **4.1** | Sensori alle **frequenze reali**: il GNSS diventa più lento del passo | **fatto** |
-| **4.2** | Canale con **latenza e perdita di pacchetti** | **fatto** |
-| 4.3 | GPS di qualità uniforme per tutti i veicoli | da fare |
+| **5.1** | **Covariance Intersection** sull'aggiornamento collaborativo, pacchetto esteso a $(\hat p_j, \Sigma_j)$ | **fatto** |
+| 5.2 | Impianto: la ground truth passa da $v^{true} = v_{cmd}$ a una legge di slittamento | da fare |
+| 5.3 | Modello di misura degli encoder in presenza di slittamento | da fare |
+| 5.4 | Rumore di processo: taratura di $q_a$, $q_\alpha$ e attivazione di $k_{terreno}$ | da fare |
 
-### 1.1 Che cosa cambia col passo 4.0
+Il passo 5.1 viene per primo pur essendo indipendente dal modello di slittamento: modificare il formato del pacchetto una volta sola costa meno che farlo due volte, e la CI è il prerequisito perché l'incertezza variabile introdotta dallo slittamento venga poi trattata correttamente.
 
-In Fase 3 il raggio radio (120 m) superava di tre volte l'estensione della formazione: il grafo era **completo per costruzione**, $\rho_2 = 0$, e un solo ciclo di consenso bastava. Tutta l'analisi spettrale del Cap. 17 era corretta ma inerte — due rette orizzontali in un grafico.
+### 1.1 Che cosa si eredita dalla Fase 4
 
-Qui il raggio scende a 55 m e i mezzi diventano cinque su due file d'ala. La conseguenza è che **cinque coppie su dieci non si vedono**, e da lì cambia tutto:
+Nulla di quanto segue viene toccato in questa fase. La documentazione completa è in [fase_4/README4.md](../fase_4/README4.md); qui se ne riportano solo i valori operativi.
 
-| Grandezza | Fase 3 | Fase 4 |
+| Grandezza | Valore | Origine |
 |---|---|---|
-| Veicoli / raggio radio | 3 / 120 m | 5 / 55 m |
-| Archi attivi | 3 su 3 (completo) | **5 su 10** |
-| Connettività algebrica $\lambda_2(L)$ | 3.000 | **0.697** |
-| Fattore di convergenza $\rho_2 = \lvert\lambda_2(Q)\rvert$ | 0.000 | **0.826** |
-| Diametro del grafo | 1 salto | **3 salti** |
-| Cicli di consenso richiesti | 1 | **49** su 50 disponibili |
-| Guadagno $K_{cons}$ | 0.15 | **0.646** |
+| Veicoli / raggio radio | 5 / 55 m | passo 4.0 |
+| Archi attivi | 5 su 10 possibili | passo 4.0 |
+| $\lambda_2(L)$ / $\rho_2 = \lvert\lambda_2(Q)\rvert$ / diametro | 0.697 / 0.826 / 3 salti | passo 4.0 |
+| $K_{cons}$ | 0.646 ($\tau = 2.22$ s) | passo 4.0 |
+| GNSS Master / Slave | ZED-F9P a 5 Hz / NEO-M8N a 1 Hz | passo 4.1 |
+| Ritardo / perdite sul broadcast | $[0, 200]$ ms gaussiano troncato / 0.5% | passo 4.2 |
+| Cicli di consenso D-WLS | 49 su 50 disponibili | passo 4.0 |
 
-La riduzione del raggio non è un artificio per rendere interessante il grafo: è la conseguenza coerente di una fisica già argomentata nel README principale (§2.2). Le antenne dei veicoli sono più basse di quelle su palo delle ancore, e l'effetto della piattaforma metallica è presente su **entrambi** i capi del link anziché su uno solo. Quella stessa fisica che giustifica $\sigma_{collab} > \sigma_{uwb}$ implica anche una portata inferiore; il documento sosteneva finora metà dell'argomento e ignorava l'altra metà.
+L'ambiente è **lo stesso file** della Fase 4: `ambiente_fase5.mat` è byte per byte identico ad `ambiente_fase4.mat`. Mappa, zone cieche e posizione delle ancore coincidono, quindi il confronto fra le due fasi è diretto.
 
-### 1.2 Geometria della formazione e robustezza della topologia
+### 1.2 Il problema: l'ultimo filtro ottimista
 
-La "V" a cinque mezzi ha un apice, due ali interne a $\pm 20$ m dall'asse e due ali esterne a $\pm 40$ m:
+Fino alla Fase 4 l'aggiornamento collaborativo trattava la posa del vicino come un punto noto: nella matrice $R$ entrava il solo rumore del sensore di ranging, $\sigma_{collab}^2$. Due cose erano sbagliate, e in versi opposti.
 
-```
-                    V1  (0, 40)      Master
-          V2 (-20, 10)      V3 (20, 10)
-   V4 (-40, -20)                  V5 (40, -20)
-```
+**L'incertezza del vicino non veniva contata affatto.** Il vicino non è un'ancora fissa rilevata una volta per tutte: è un veicolo che sta stimando la propria posa, con un'incertezza $\Sigma_j$ dello stesso ordine di grandezza della propria. Ignorarla equivale a dichiarare un riferimento migliore di quello che è.
 
-Le distanze nominali si separano in **due gruppi netti**: cinque coppie a 36–40 m e cinque a 67–80 m, con un vuoto di 27 m in mezzo. Qualunque raggio fra 45 e 65 m produce quindi la stessa identica topologia, e la scelta di 55 m lascia **+35% di margine sui link attivi e −17% su quelli assenti**: l'errore di formazione non li fa sfarfallare. La topologia resta deterministica per l'intera missione, e la variabilità temporale verrà introdotta deliberatamente ai passi 4.2 e in Fase 6, non subita per un margine mal scelto.
+**La correlazione fra le due stime non veniva contata nemmeno.** Ed è il problema più serio, perché non si risolve gonfiando $R$. In una rete con cicli — e il grafo della Fase 4 ne ha — l'informazione che il veicolo $i$ trasmette torna indietro dopo pochi salti dentro la stima di $j$, e rientra nel filtro di $i$ come se fosse nuova. Il termine di covarianza incrociata $P_{ij} = E[\tilde x_i \tilde x_j^T]$ è reale e non nullo, ma tracciarlo esattamente richiederebbe che ogni agente conosca l'intera topologia, la storia degli scambi e i modelli di rumore di tutti gli altri: costo $O(N^3)$, comunicazione continua, e impossibile in presenza di perdite. Imporre $P_{ij} = 0$ è la causa riconosciuta della divergenza nella localizzazione cooperativa decentralizzata — il *data rumination*.
 
-La struttura risultante è una catena con due nodi foglia: `V4 — V2 — V1 — V3 — V5`, più l'arco `V2 — V3`. V2 e V3 sono **punti di articolazione**: se uno dei due cade, un intero ramo si stacca dalla rete. È un difetto di robustezza reale di questa geometria, e va tenuto presente leggendo i risultati.
+> **Perché non si può correggere solo $R$.** Usare $\Sigma_j$ per gonfiare $R$ lasciando il guadagno di Kalman standard sarebbe **peggiore** che ignorarla, non migliore: tratterebbe l'incertezza del vicino come rumore *indipendente*, cioè affermerebbe esplicitamente $P_{ij} = 0$ proprio nel punto in cui la correlazione nasce. È il doppio conteggio del Cap. 15 travestito da rigore. Estensione del pacchetto e CI vanno introdotte **insieme**, ed è la ragione per cui la Fase 4 non trasmetteva $\Sigma_j$.
 
-### 1.3 Ritaratura del guadagno di consenso
+### 1.3 L'algoritmo
 
-La costante di tempo dell'errore di formazione vale $\tau = 1/(K_{cons}\lambda_2(L))$. Passando da $\lambda_2(L) = 3.000$ a $\lambda_2(L) = 0.697$, a parità di guadagno $\tau$ salirebbe da 2.22 a **9.56 s**: la formazione diventerebbe quattro volte più molle, con un ritardo di inseguimento tale da mettere a rischio i link stessi.
+**Il pacchetto si estende.** Da $\hat p_j$ soli a $(\hat p_j, \Sigma_j^{(1:2,1:2)})$: da 2 a 5 numeri, essendo la covarianza simmetrica. A 8 byte per numero sono 40 B a pacchetto, cioè **800 B/s ricevuti** da ciascun veicolo a 10 Hz con due vicini in media. Il dato viaggia sullo stesso canale del broadcast della posa e subisce lo stesso ritardo e le stesse perdite.
 
-$K_{cons}$ è quindi ricalcolato per tenere $\tau$ invariato:
+$\Sigma_j$ **non viene propagata in avanti** come invece si fa con la posizione. Su un'età massima di 400 ms il modello di processo aggiungerebbe circa $1.3\cdot10^{-4}$ m², cioè lo 0.3% di una varianza di posizione tipica di 0.04–0.16 m². Propagarla richiederebbe le Jacobiane del vicino per un contributo che si perde nell'arrotondamento.
 
-$$K_{cons} = \frac{1}{\tau\,\lambda_2(L)} = \frac{1}{2.22 \cdot 0.697} = 0.646$$
+**L'aggiornamento si spezza in due.** Non tutte le misure sono correlate con la stima a priori, e applicare la CI a tutte costerebbe ottimalità senza alcun guadagno:
 
-con margine di discretizzazione $K_{cons} T_s \lambda_{max} = 0.28$, ben sotto il limite di stabilità pari a 2. In simulazione $\tau$ risulta effettivamente 2.22 s.
-
-**È il punto in cui $\lambda_2(L)$ smette di essere un indicatore e diventa un parametro di progetto.** Fino alla Fase 3 la connettività algebrica veniva calcolata, graficata e commentata; qui viene *usata* per dimensionare un guadagno.
-
-### 1.4 Passo 4.1 — Sensori alle frequenze reali
-
-Il passo di simulazione resta **10 Hz**. Ogni sensore viene però trattato per quello che è: chi lavora più in fretta del passo si legge a 10 Hz senza penalità, chi lavora più piano fornisce una misura solo ogni $N$ passi.
-
-| Sensore | Modello | Frequenza nativa | Trattamento a 10 Hz |
+| Blocco | Misure | Regola | Motivo |
 |---|---|---|---|
-| AHRS (heading, giroscopio) | **Xsens MTi-3** | 100 Hz interni | letto a 10 Hz, $\sigma$ di targa invariata |
-| Velocità cingoli | sensore Hall sul pignone di trazione | conteggio impulsi | finestra di 100 ms = il passo |
-| Ranging | **Qorvo DW1000** | ~1 ms per scambio TW-TOF | 9 scambi = 9 ms, sta nel passo |
-| GNSS Master | **u-blox ZED-F9P** (RTK) | fino a 20 Hz, usato a **5 Hz** | 1 fix ogni **2** passi |
-| GNSS Slave | **u-blox NEO-M8N** | **1 Hz** nominale | 1 fix ogni **10** passi |
+| **1** | AHRS, encoder, GNSS, ancore fisse UWB | Kalman standard | sensori propri del veicolo e riferimenti a posizione nota: nessuna informazione proveniente dalla rete |
+| **2** | ranging verso i vicini | **Covariance Intersection** | la posa del vicino contiene informazione già passata da questo filtro |
 
-Due scelte vanno motivate, perché la tentazione di fare il contrario è forte.
+È l'architettura nota come **Split Covariance Intersection**. Il blocco 2 linearizza attorno al risultato del blocco 1, che è l'a priori del secondo aggiornamento.
 
-**L'AHRS non va riscalato.** Un MTi-3 filtra internamente a 100 Hz e restituisce un assetto già elaborato: la $\sigma$ di targa (2° RMS su yaw) vale alla frequenza a cui lo si interroga. Dividere $R$ per 10, come se si mediassero dieci campioni grezzi indipendenti, sarebbe sbagliato due volte — la media è già stata fatta a bordo del sensore, e l'heading nel frattempo ruota, quindi mediarlo introdurrebbe un bias.
+**L'incertezza del vicino entra proiettata** (Carrillo-Arce et al., IROS 2013). La CI classica fonde due stime della *stessa* grandezza, mentre qui il vicino stima il *proprio* stato e una misura di sola distanza non produce una stima puntuale della propria posizione. Della sua ellisse di incertezza conta soltanto l'estensione **lungo la congiungente**, l'unica direzione che il ranging legge:
 
-**Gli encoder non hanno una frequenza, hanno una finestra.** Un sensore a conteggio di impulsi integra su un intervallo: 100 ms è esattamente ciò che il passo di simulazione già rappresenta.
+$$R_{eff} = \sigma_{collab}^2 + u_{ij}^T\,\Sigma_j^{(1:2,1:2)}\,u_{ij}, \qquad u_{ij} = \frac{\hat p_i - \hat p_j}{\lVert \hat p_i - \hat p_j \rVert}$$
 
-**Resta il solo GNSS più lento del passo, e va decimato.** Campionarlo a 10 Hz significherebbe dargli fino a dieci volte le misure che produce, cioè dichiarare un ricevitore migliore di quello montato: con un NEO-M8N a 1 Hz l'equivalente sarebbe $\sigma_{eff} = 2.0/\sqrt{10} = 0.63$ m anziché 2.0 m.
+La proiezione riduce una matrice a uno scalare omogeneo a $\sigma_{collab}^2$, e la somma è lecita perché il rumore del sensore è indipendente dall'errore di $j$. Il vettore $u_{ij}$ è già la prima riga del Jacobiano $C$: non è un calcolo aggiuntivo.
 
-Nel codice la distinzione fra "il segnale esiste" e "il ricevitore ha prodotto una soluzione" è tenuta separata:
+**La CI è un aggiornamento di Kalman con a priori e misura sgonfiati.** Posto $\Sigma_\gamma = \bar\Sigma/\gamma$ e $R_\gamma = R_{eff}/(1-\gamma)$, la definizione
 
-```matlab
-fix_gps = ~in_denied && mod(k, fleet(i).passi_gps) == 0;
-```
+$$\Sigma^{-1} = \gamma\,\bar\Sigma^{-1} + (1-\gamma)\,C^T R_{eff}^{-1} C$$
 
-`in_denied` resta una proprietà della mappa, e continua ad alimentare le statistiche di copertura e le fasce ombreggiate nei grafici. La conseguenza operativa è che uno Slave a cielo aperto passa il **90% dei passi in sola predizione**, sostenuto da AHRS ed encoder.
+diventa $\Sigma^{-1} = \Sigma_\gamma^{-1} + C^T R_\gamma^{-1} C$, cioè la forma informativa dell'aggiornamento di Kalman. Le equazioni restano quelle di sempre, applicate a due matrici riscalate. È anche il motivo per cui la CI si innesta su un EKF senza riscriverne l'architettura: la nonlinearità resta confinata in $C$ e in $h(\cdot)$.
 
-### 1.5 Passo 4.2 — Canale con latenza e perdite
+**Il peso $\gamma$ è scelto minimizzando la traccia del blocco di posizione.** Il problema è convesso e scalare su $[0,1]$, quindi si risolve con `fminbnd` (sezione aurea con interpolazione parabolica, il metodo indicato nella teoria). Si minimizza la traccia della sola posizione e non dell'intera $\Sigma$ perché lo stato mescola metri, radianti e velocità: sommarne le varianze darebbe un costo dimensionalmente incoerente, dominato dall'unità di misura più grande.
 
-Il pacchetto di posa scambiato a 10 Hz non arriva né subito né sempre.
+> **Notazione.** Il documento di teoria [theory/TEORIA_CI.pdf](../theory/TEORIA_CI.pdf) chiama $\omega$ questo peso. Nel progetto si usa $\gamma$, come già in [README.md §2.1](../README.md) e §2.3, per non collidere con la velocità angolare $\omega$ del modello uniciclo. Nel codice è `gamma_ci`, perché `gamma` è una funzione predefinita di MATLAB.
 
-| Parametro | Valore |
+Il caso $\gamma = 1$ — non fondere, e tenersi l'a priori — appartiene all'insieme ammissibile ma cade sull'estremo che la ricerca non raggiunge, perché lì $1/(1-\gamma)$ diverge. Viene quindi confrontato esplicitamente con l'ottimo trovato: senza quel confronto resterebbe a ogni passo un gonfiamento residuo dello 0.04%, irrilevante su una fusione sola ma non su un filtro che fonde 16 000 volte.
+
+### 1.4 Risultati
+
+**La stima non peggiora, la covarianza dichiarata sale.**
+
+| Veicolo | MAE con GPS | MAE in zona cieca | $\mathrm{tr}(\Sigma_{pos})$ cieca, Fase 4 | Fase 5 | NEES posizione |
+|---|---|---|---|---|---|
+| V1 (Master) | 0.070 m | 0.077 m | 0.0129 m² | 0.0146 m² | 1.08 |
+| V2 (Slave) | 0.354 m | 0.080 m | 0.0124 m² | 0.0156 m² | 1.29 |
+| V3 | 0.331 m | 0.081 m | 0.0131 m² | 0.0149 m² | 1.36 |
+| V4 | 0.324 m | 0.087 m | 0.0163 m² | 0.0184 m² | 1.49 |
+| V5 | 0.369 m | 0.078 m | 0.0143 m² | 0.0148 m² | 1.31 |
+
+L'errore in zona cieca resta nella stessa fascia della Fase 4 (0.073–0.086 m), mentre la traccia della covarianza cresce mediamente del **14%**. È esattamente il comportamento atteso: la CI non migliora la stima, **toglie una confidenza che non era giustificata**. La missione dura 1218.3 s contro i 1218.1 della Fase 4, cioè non cambia.
+
+**Il NEES conferma la consistenza.** L'indice $(\tilde p^T \Sigma_{pos}^{-1}\tilde p)$ ha valore atteso 2 per una stima bidimensionale: sopra 2 il filtro è ottimista, sotto è conservativo. Tutti e cinque i veicoli stanno fra **1.08 e 1.49**, cioè dalla parte sicura, che è la sola garanzia che la CI promette.
+
+### 1.5 Il risultato che conta: la CI rifiuta la misura collaborativa
+
+Il dato più informativo dell'intera fase è che **il peso $\gamma$ torna pari a 1 in tutte e 16 218 le fusioni**. La Covariance Intersection, messa nella condizione di decidere quanto fidarsi del vicino, decide di **non usarlo affatto**.
+
+| Grandezza | Valore |
 |---|---|
-| Ritardo | gaussiano, $\mathcal{N}(100\text{ ms},\ (33\text{ ms})^2)$ troncato a $[0, 200]$ ms |
-| Perdita di pacchetti | 0.5% |
+| Fusioni in forma CI | 16 218 su 16 218 passi in zona cieca |
+| Di cui con misura accolta ($\gamma < 1$) | **0** |
+| Gonfiamento di $R$, $R_{eff}/\sigma_{collab}^2$ | 1.14× in media, 1.80× al massimo |
+| Incertezza sulla congiungente: a priori | **0.09 m** |
+| Incertezza sulla congiungente: misura | **0.62 m** |
+| Ancore fisse viste in zona cieca | 4.5 in media, minimo 3 |
 
-**Sulla forma della distribuzione.** Le latenze di una rete reale sono asimmetriche a destra: c'è un pavimento fisico dato dal tempo di trasmissione, la moda sta vicino a quel pavimento, e la coda lunga viene da ritrasmissioni e collisioni. Una gaussiana simmetrica non è fedele, ma è **conservativa** — a parità di massimo ha media più alta, quindi stressa di più il sistema — e a 10 Hz il ritardo si quantizza comunque su tre soli valori (0, 1 o 2 passi), il che rende la forma in gran parte irrilevante. I 200 ms di massimo sono pessimistici per UWB, dove uno scambio dura ~1 ms, ma sotto un passo di campionamento il ritardo non sarebbe rappresentabile.
+Non è un ottimizzatore bloccato: è una soglia esatta. Con a priori isotropo di varianza $s$ e misura scalare di varianza $R$ lungo una direzione, la traccia risultante vale $f(\gamma) = 1/(\gamma/s + (1-\gamma)/R) + s/\gamma$ e la sua derivata in $\gamma = 1$ è $s^2/R - 2s$. Il minimo lascia il bordo — cioè la misura viene usata — solo se $s > 2R$, ovvero
 
-**Non serve il timestamping**, e non è una scorciatoia: è che il progetto non ha il problema che il timestamping risolve. Vanno distinti due ritardi.
+$$\mathrm{dev}(\text{a priori}) > \sqrt{2}\;\mathrm{dev}(\text{misura})$$
 
-- **Posa dell'ancora vecchia.** Il pacchetto del vicino arriva vecchio, ma la misura di distanza la fa la propria radio *adesso*: è fresca. Stale è solo la posizione usata per predirla, e si rimedia propagandola in avanti col modello di moto — esattamente ciò che la Fase 3 già faceva per un passo.
-- **Misura fuori sequenza (OOSM).** Una misura *del proprio stato*, presa nel passato, che arriva adesso. Lì servirebbe tornare indietro nel buffer, applicarla al momento giusto e ri-propagare.
+Qui il rapporto vale **0.09/0.62 = 0.15**, dieci volte sotto la soglia. La ragione sta nell'ultima riga della tabella: in zona cieca il veicolo vede in media 4.5 ancore fisse a $\sigma = 0.5$ m e non ne vede mai meno di 3. Un a priori così vincolato non ha nulla da guadagnare da un singolo range verso un veicolo che è a sua volta incerto.
 
-Il caso del progetto è il primo. Nessun veicolo trasmette misure *altrui*: trasmette la propria posa, che il ricevente usa come ancora. Niente buffer di $(\hat x, \Sigma)$, niente retrodizione.
+**Che cosa se ne ricava.** La Fase 4 aveva già osservato che «le ancore fisse restano il riferimento dominante in zona cieca, e il ranging collaborativo è un contributo aggiuntivo». La CI trasforma quell'osservazione qualitativa in un verdetto quantitativo: in questa configurazione il ranging collaborativo non è un contributo aggiuntivo, è **rumore travestito da informazione**, e il guadagno di accuratezza che sembrava portare in Fase 4 era interamente confidenza spuria. Il 14% di covarianza in più misurato al §1.4 è la restituzione di quel prestito.
 
-E il buffer, di fatto, esiste già: `fleet(j).x_est` è l'intera storia delle stime. Ricevere con ritardo significa semplicemente **leggerla più indietro**:
+Il risultato è condizionato alla geometria, non generale. La CI userebbe il vicino nel momento in cui l'a priori si degradasse oltre la soglia: un veicolo con **una o zero ancore in vista**, o l'ingresso del modello di slittamento dei passi 5.2–5.4, che allarga $\Sigma$ proprio in modo variabile nel tempo. È la condizione in cui la localizzazione collaborativa serve davvero, e la Fase 5 lascia l'infrastruttura pronta a riconoscerla da sola.
 
-```matlab
-k_rx(i,j) = max(k_rx(i,j), max(1, k - round(d_s/Ts)));
-```
+### 1.6 Validazione
 
-`k_rx(i,j)` è l'indice del pacchetto più fresco che $i$ possiede di $j$. Il `max` esterno impedisce che un pacchetto tardivo sostituisca un dato più recente già ricevuto. Su un pacchetto perso l'indice non avanza e il dato invecchia da solo: **ritardo e perdita si compongono in un'unica grandezza**, l'*età* del dato usato, che è l'unica cosa che il filtro subisce.
+`common/verifica_ci.m` verifica sei proprietà indipendenti dalla simulazione.
 
-Il consenso usa il dato ricevuto **senza compensare** il ritardo — è la condizione in cui vale il limite di stabilità teorico — mentre l'ancora mobile viene propagata fino a $t_{k+1}$ per tutta la sua età.
+| Test | Verifica | Esito |
+|---|---|---|
+| 1 | La forma di Kalman sgonfiata coincide con $\Sigma^{-1} = \gamma\bar\Sigma^{-1} + (1-\gamma)C^TR^{-1}C$ | errore 0 |
+| 2 | Il peso si muove: misura debole $\to \gamma = 1$, misura forte $\to \gamma = 0.0007$ | ✓ |
+| 3 | La fusione non peggiora mai: $\mathrm{tr}(\Sigma_{pos}) \le \mathrm{tr}(\bar\Sigma_{pos})$ | 0 violazioni su 500 |
+| 4 | **Consistenza sotto correlazione ignota**, 20 000 prove Monte Carlo | ✓ |
+| 5 | La geometria della Fase 5 porta a $\gamma = 1$ | ✓ |
+| 6 | La soglia di accoglimento è $\sqrt 2$: 1.35 scartata, 1.45 accolta | ✓ |
 
-Il modello vale per il broadcast delle pose a 10 Hz. I cicli di consenso del D-WLS, che vivono sulla scala del millisecondo, restano ideali: perdite su quel canale sono materia della Fase 6, dove entra la connettività congiunta.
+Il TEST 4 è quello che giustifica l'esistenza dell'algoritmo nel progetto. Si costruiscono due stime della stessa posizione i cui errori condividono una componente comune, con correlazione reale 0.74 ignota a entrambi gli stimatori, e si confrontano le due regole di fusione:
 
-### 1.6 Risultati dei passi 4.1 e 4.2
-
-**Il canale si comporta come richiesto.**
-
-| Grandezza | Valore misurato |
-|---|---|
-| Pacchetti persi | 0.48% (richiesto 0.5%) |
-| Ritardo quantizzato 0 / 1 / 2 passi | 7% / 87% / 7% |
-| Età del dato usato | **100 ms in media, 400 ms al massimo** |
-| Margine di stabilità consumato | 18% in media, 71% nel caso peggiore (limite 565 ms) |
-| Errore dell'ancora mobile all'età media | 0.002 m, contro $\sigma_{collab} = 0.6$ m |
-
-L'età massima di 400 ms nasce da due passi di ritardo più due passi di perdite consecutive — un evento raro (probabilità $2.5\cdot10^{-5}$ per coppia e per passo) ma che su 240 000 tentativi si presenta qualche volta. È il caso peggiore, e mangia il **71%** del margine di stabilità.
-
-**Sull'accuratezza il GNSS lento domina, il ritardo no.**
-
-| Veicolo | MAE con GPS | MAE in zona cieca | $\mathrm{tr}(\Sigma_{pos})$ con GPS / cieca |
+| Regola | NEES | Covarianza dichiarata | Covarianza reale |
 |---|---|---|---|
-| V1 (Master, ZED-F9P a 5 Hz) | 0.070 m | 0.078 m | 0.0140 / 0.0129 m² |
-| V2 (Slave, NEO-M8N a 1 Hz) | 0.347 m | 0.086 m | 0.3321 / 0.0124 m² |
-| V3 | 0.332 m | 0.073 m | 0.3341 / 0.0131 m² |
-| V4 | 0.311 m | 0.084 m | 0.3323 / 0.0163 m² |
-| V5 | 0.389 m | 0.075 m | 0.3330 / 0.0143 m² |
+| Kalman standard ($P_{ij} = 0$ imposto) | **3.46** | 0.170 m² | 0.297 m² |
+| Covariance Intersection | **1.81** | 0.340 m² | 0.310 m² |
 
-Il Master perde poco (0.061 → 0.070 m): a 5 Hz il fix RTK arriva ancora abbastanza spesso. Gli Slave passano da 0.19–0.21 a **0.31–0.39 m**, quasi il doppio, perché fra un fix e l'altro dead-reckonano per un secondo intero.
+Il guadagno di Kalman dichiara **1.75 volte meno incertezza** di quanta ne abbia davvero; la CI ne dichiara un po' di più del necessario. Il caso è deliberatamente lineare, così il test isola la regola di fusione dall'errore di linearizzazione.
 
-**In zona cieca invece non cambia quasi nulla** (0.073–0.089 m, era 0.074–0.089): là il riferimento è il ranging UWB, che gira a 10 Hz e non è stato toccato.
+### 1.7 Conseguenza da registrare: l'architettura a commutazione ora costa il doppio
 
-Il risultato già osservato al passo 4.0 ne esce **molto rafforzato**: gli Slave ora stimano **quattro volte meglio al buio che a cielo aperto**, e la covarianza dichiarata concorda con un fattore 27 ($0.332$ contro $0.0124$ m²). Non è un paradosso, è la conseguenza diretta di confrontare un NEO-M8N a 1 Hz con cinque ancore UWB a 10 Hz e $\sigma = 0.5$ m.
+Il ramo UWB scatta solo dentro le zone cieche. Uno Slave a cielo aperto, nel 90% dei passi in cui non ha un fix GNSS, **non usa le ancore anche quando le ha in portata**: procede in sola predizione, con 0.35 m di errore là dove le ancore ne darebbero 0.08.
 
-**Il ritardo costa velocità, non accuratezza.** La missione passa da 1078.5 a **1218.1 secondi**, il 13% più lenta, a parità di tutto il resto. Il consenso agisce su errori di formazione vecchi di 100 ms, il che equivale a ridurre il guadagno d'anello: la flotta resta stabile — si consuma il 18% del margine — ma reagisce più pigramente. È l'unico effetto del passo 4.2 che si vede sui numeri, e va attribuito al ritardo e non alle perdite.
-
-**Lo 0.5% di perdita è di fatto invisibile.** Con quella probabilità l'età media del dato cresce di 0.005 passi, cioè mezzo millisecondo: sotto ogni soglia di rilevabilità. Per vedere un effetto servirebbe il 5–10%, che è materia della Fase 6.
-
-### 1.7 Conseguenza da registrare: l'architettura a commutazione ora costa
-
-Il ramo UWB scatta solo dentro le zone cieche. Uno Slave a cielo aperto, nel 90% dei passi in cui non ha un fix GNSS, **non usa le ancore anche quando le ha in portata**: procede in sola predizione.
-
-Era una semplificazione accettabile con il GPS a 10 Hz. Con il GNSS a 1 Hz costa 0.35 m di errore là dove le ancore ne darebbero 0.08. La correzione è una riga — sostituire il ramo `elseif in_denied` con una condizione sulla visibilità delle ancore — ed è ora sostenuta dai dati, non da un'intuizione. È il candidato naturale al prossimo intervento.
+La Fase 5 aggiunge una seconda ragione alla stessa correzione. Quella commutazione è anche ciò che tiene l'a priori in zona cieca sempre così stretto da rendere inutile il ranging collaborativo: le due condizioni — «poche ancore» e «vicini utili» — non si presentano mai insieme, per costruzione dell'architettura e non per proprietà dell'ambiente. Sostituire `elseif in_denied` con una condizione sulla visibilità delle ancore resta un intervento di una riga, ed è ora sostenuto da due misure indipendenti.
 
 ## 2. Navigazione e Path-Following
 Il veicolo Master (Veicolo 1) guida la formazione lungo il percorso specificato in `path_points`. Viene implementato un algoritmo di inseguimento del target virtuale (*Virtual Target Tracking*):
@@ -189,21 +176,23 @@ $$z_{collab}^{(j)} = ||p_i - \hat{p}_j|| + \nu_{rel}$$
 **Sincronizzazione dell'ancora mobile.** L'ancora usata non è $\hat{p}_j$ al tempo $t_k$, ma la sua **propagazione di un passo** con il modello di moto del vicino:
 $$\hat{p}_{j, k+1|k} = \begin{bmatrix} \hat{x}_{j,k} + \hat{v}_{j,k}\cos(\hat{\theta}_{j,k}) T_s \\ \hat{y}_{j,k} + \hat{v}_{j,k}\sin(\hat{\theta}_{j,k}) T_s \end{bmatrix}$$
 La scelta risponde a due esigenze distinte:
-1. **Causalità e assenza di loop algebrico.** Usare la stima aggiornata $\hat{x}_{j,k+1}$ renderebbe il filtro di $i$ dipendente dal filtro di $j$ al medesimo istante — e viceversa, dato che $j$ fa lo stesso con $i$. Il ritardo rompe la circolarità e corrisponde a ciò che un canale reale rende effettivamente disponibile: l'ultimo pacchetto ricevuto. Qui vale un passo solo in assenza di ritardo di canale: con il modello del §1.5 la propagazione copre l'intera età del pacchetto.
+1. **Causalità e assenza di loop algebrico.** Usare la stima aggiornata $\hat{x}_{j,k+1}$ renderebbe il filtro di $i$ dipendente dal filtro di $j$ al medesimo istante — e viceversa, dato che $j$ fa lo stesso con $i$. Il ritardo rompe la circolarità e corrisponde a ciò che un canale reale rende effettivamente disponibile: l'ultimo pacchetto ricevuto. Qui vale un passo solo in assenza di ritardo di canale: con il canale non ideale ereditato dalla Fase 4 la propagazione copre l'intera età del pacchetto.
 2. **Coerenza temporale.** La misura fisica $d_{ij}$ è acquisita a $t_{k+1}$. Confrontarla con una posizione riferita a $t_k$ introdurrebbe un bias sistematico di $|v_j| T_s$, dello stesso ordine del rumore del sensore ($\sigma_{collab} = 0.6$ m a 2.5 m/s).
 
 Ciò crea un accoppiamento matematico fra gli agenti: se un veicolo perde tutti i riferimenti assoluti (no GPS, no UWB), la sua stima non degrada come nel dead-reckoning puro, ma resta agganciata a quella del resto della flotta.
 
+**È proprio quell'accoppiamento a rendere la misura diversa da tutte le altre.** L'informazione che $i$ trasmette torna indietro dentro la stima di $j$ e rientra nel filtro di $i$ come se fosse nuova: l'ipotesi di scorrelazione su cui poggia il guadagno di Kalman non regge. Dalla Fase 5 questa singola riga di misura è quindi estratta dal blocco comune e aggiornata in forma **Covariance Intersection** (§1.3), mentre AHRS, encoder, GNSS e ancore fisse restano su guadagno di Kalman standard. Il pacchetto ricevuto porta con sé $\Sigma_j$, che entra proiettata sulla congiungente.
+
 ### 3.3 Limiti Noti dell'Implementazione Attuale
 Due limiti sono documentati esplicitamente perché condizionano l'interpretazione dei risultati e definiscono il lavoro successivo.
 
-**a) Il filtro è ottimista sulla misura collaborativa.** La matrice $R$ associata a $z_{collab}$ contiene il solo rumore del sensore, $\sigma_{collab}^2$. L'incertezza della stima del vicino — la sua matrice $\Sigma_j$ — viene ignorata, come se $\hat{p}_j$ fosse un'ancora fissa nota esattamente. Il filtro sottostima quindi la propria covarianza.
+**a) Il filtro era ottimista sulla misura collaborativa — risolto in questa fase.** Fino alla Fase 4 la matrice $R$ associata a $z_{collab}$ conteneva il solo rumore del sensore, $\sigma_{collab}^2$: l'incertezza $\Sigma_j$ del vicino veniva ignorata, come se $\hat{p}_j$ fosse un'ancora fissa nota esattamente, e la correlazione fra i due filtri nemmeno considerata.
 
-Il pacchetto scambiato contiene infatti la sola posizione stimata: $\Sigma_j$ **non viene trasmessa**, perché finché non la si usa per la Covariance Intersection non porterebbe alcun beneficio e occuperebbe banda per nulla. Quando la CI verrà introdotta, la covarianza del vicino entrerà proiettata sulla direzione della congiungente:
+Il passo 5.1 chiude entrambi i punti insieme, come richiesto: il pacchetto passa da 2 a 5 numeri per trasportare il blocco $2\times 2$ della covarianza, questa entra proiettata sulla direzione della congiungente,
 $$R_{eff} = \sigma_{collab}^2 + u^T \Sigma_j^{(1:2,1:2)} u, \qquad u = \frac{\hat{p}_i - \hat{p}_j}{||\hat{p}_i - \hat{p}_j||}$$
-Richiede che il vicino trasmetta, oltre alla posizione, il blocco $2 \times 2$ della propria covarianza — cioè che il **contenuto del pacchetto scambiato** passi da 2 a 5 numeri. Questo mitiga la sovra-confidenza ma **non** risolve la correlazione: poiché $i$ e $j$ si scambiano informazione ciclicamente, le stime diventano correlate in modo ignoto (*data rumination*), ed è per questo che l'architettura prevede la Covariance Intersection.
+e l'aggiornamento viene eseguito in forma CI anziché con il guadagno di Kalman. Derivazione, risultati e validazione ai §1.2–1.6.
 
-> **Programmato per la Fase 5** (README principale, §4, punto 4). I due interventi — estensione del pacchetto con $\Sigma_j$ e aggiornamento in forma CI — vanno introdotti **insieme**: usare $R_{eff}$ con il guadagno di Kalman standard tratterebbe l'incertezza del vicino come rumore indipendente, mentre la propria stima contiene già informazione arrivata da lui, e sarebbe il doppio conteggio del Cap. 15 travestito da correzione. La collocazione in Fase 5 è dettata dallo slittamento, che rende l'incertezza dei vicini non solo maggiore ma **variabile nel tempo**.
+**Il verdetto della CI su questa configurazione è netto: la misura collaborativa viene scartata in tutte le fusioni.** L'a priori, già vincolato da 4.5 ancore fisse in media, è 7.3 volte migliore della misura, mentre la soglia di accoglimento è $\sqrt2$. Quanto scritto al punto c) — "il ranging collaborativo è un contributo aggiuntivo, non il sostegno principale" — ne esce quantificato: in zona cieca non è nemmeno un contributo aggiuntivo.
 
 **b) La scala della formazione determina l'esistenza stessa dello scenario collaborativo.** Le zone GPS-denied hanno raggio 45–85 m. Se la formazione è larga pochi metri i mezzi condividono sempre la stessa condizione di copertura, e lo scenario di riferimento — "un veicolo perde il GPS ma un vicino lo mantiene e lo àncora" — non può verificarsi. La formazione a cinque, profonda 60 m contro i 30 m della Fase 3, migliora ulteriormente questa statistica:
 
@@ -217,7 +206,7 @@ La copertura mista è la condizione in cui la localizzazione collaborativa serve
 
 Resta il 9.4% di campioni in cui **nessun** veicolo dispone di riferimenti assoluti diversi dalle ancore UWB fisse. In quelle condizioni il ranging inter-veicolare non può correggere la posizione assoluta della flotta: una traslazione rigida dell'intero gruppo lascia tutte le distanze relative invariate, quindi la direzione di traslazione comune appartiene al nucleo della matrice di osservabilità collettiva. È una proprietà strutturale, non un difetto di taratura.
 
-**c) Accuratezza della stima di posa.** I valori correnti, comprensivi dei passi 4.1 e 4.2, sono nella tabella del §1.6. Con tutti i sensori a 10 Hz e canale ideale, cioè al solo passo 4.0, valevano:
+**c) Accuratezza della stima di posa.** I valori correnti sono nella tabella del §1.4. Con tutti i sensori a 10 Hz e canale ideale, cioè al solo passo 4.0, valevano:
 
 | Veicolo | MAE con GPS | MAE in zona cieca |
 |---|---|---|
@@ -226,7 +215,7 @@ Resta il 9.4% di campioni in cui **nessun** veicolo dispone di riferimenti assol
 
 **Per gli Slave la stima in zona GPS-denied è più accurata che a cielo aperto**, e la covarianza dichiarata concorda. Il divario, già presente qui, si allarga a un fattore 4 con il GNSS alla sua frequenza reale. Non è un paradosso: il ranging UWB a $\sigma = 0.5$ m da cinque ancore geometricamente ben distribuite porta più informazione di un GPS standard a $\sigma = 2.0$ m. Il risultato suggerisce che in un'area attrezzata con ancore converrebbe fondere UWB e GPS *simultaneamente* anziché commutare fra i due; l'architettura a $C$ di dimensione variabile lo consente già senza modifiche strutturali.
 
-Il fatto che i quattro Slave siano fra loro indistinguibili, comprese le due ali esterne che hanno un solo vicino ciascuna, indica che il grafo sparso non degrada la localizzazione: le ancore fisse restano il riferimento dominante in zona cieca, e il ranging collaborativo è un contributo aggiuntivo, non il sostegno principale.
+Il fatto che i quattro Slave siano fra loro indistinguibili, comprese le due ali esterne che hanno un solo vicino ciascuna, indica che il grafo sparso non degrada la localizzazione: le ancore fisse restano il riferimento dominante in zona cieca. La Fase 5 porta l'osservazione alle sue conseguenze — vedi §1.5.
 
 **d) Errore di inseguimento a regime, e il suo costo sulla velocità della flotta.** Solo il Master riceve il termine di velocità $V_{rif}$ del path following; gli Slave si muovono unicamente per effetto del consenso, e devono quindi mantenere un errore di formazione non nullo per generare la velocità necessaria a stare al passo. È l'errore a regime di un controllo puramente proporzionale che insegue un riferimento in movimento.
 
@@ -236,14 +225,14 @@ $$n\,v_f = \sum_i V_{rif,i} \qquad\Longrightarrow\qquad v_f = \frac{v_{cruise}}{
 
 perché il solo Master riceve $V_{rif}$. Il consenso è una forza *interna* e non può spostare il baricentro: l'unica spinta esterna viene dal Master e si divide fra tutti. Verifica: $2.5/3 = 0.83$ m/s con tre mezzi (misurato 0.83), $2.5/5 = 0.50$ con cinque (misurato 0.50).
 
-Aggiungere veicoli a una formazione del primo ordine guidata da un Master la **rallenta** quindi in proporzione diretta. La missione passa da 692 s (Fase 3) a 1079 s (passo 4.0), e a **1218 s** con il ritardo di canale del passo 4.2, che toglie un ulteriore 13% agendo su errori di formazione vecchi di 100 ms.
+Aggiungere veicoli a una formazione del primo ordine guidata da un Master la **rallenta** quindi in proporzione diretta. La missione passa da 692 s (Fase 3) a 1079 s (passo 4.0), e a **1218 s** con il ritardo di canale del passo 4.2, che toglie un ulteriore 13% agendo su errori di formazione vecchi di 100 ms. Il passo 5.1 non la cambia: la CI agisce sulla stima, non sul controllo.
 
 La correzione è **una riga**: propagare $V_{rif}$ a tutta la flotta in feedforward, così che $\sum_i V_{rif,i} = N v_{cruise}$ e $v_f = v_{cruise}$. È esattamente ciò che fa la Fase 2, dove infatti il fenomeno non si presenta. L'alternativa strutturale è il consenso del secondo ordine, in cui ogni agente ha una propria posizione desiderata e il Master smette di essere un punto singolo di guasto.
 
 
 ## 4. Figure Prodotte
 
-L'esecuzione di `main4.m` genera la cartella `fase_4/risultati/` con otto figure, con la stessa nomenclatura della Fase 3 per consentire il confronto diretto fra le due configurazioni.
+L'esecuzione di `main5.m` genera la cartella `fase_5/risultati/` con otto figure, con la stessa nomenclatura delle Fasi 3 e 4 per consentire il confronto diretto fra le configurazioni.
 
 | File | Contenuto |
 |---|---|
@@ -279,7 +268,7 @@ Valori medi di $\text{tr}(\Sigma_{pos})$ misurati (seed 7, transitorio escluso):
 Il Master, che dispone di GNSS RTK a 5 Hz, resta pressoché indifferente all'ingresso in zona cieca. Gli Slave, con NEO-M8N a 1 Hz, registrano invece un **miglioramento di 27 volte** sulla traccia della covarianza (0.332 contro 0.0124 m²): con cinque ancore ben distribuite il ranging UWB a $\sigma = 0.5$ m e 10 Hz porta molta più informazione di un GNSS a $\sigma = 2.0$ m e 1 Hz. È la quantificazione, sul piano della covarianza, del risultato riportato al §1.6 in termini di errore.
 
 ### 4.3 Grafo di comunicazione (figura 7)
-La legge di consenso è pesata dalla matrice di **adiacenza** del grafo. Il raggio di comunicazione coincide con `r_collab` = **55 m**, la portata del ranging inter-veicolare: è la stessa radio UWB a fornire sia la misura di distanza sia il canale dati, quindi non avrebbe senso che il consenso raggiungesse un vicino con cui il ranging è impossibile. La riduzione da 120 a 55 m rispetto alla Fase 3 è motivata al §1.1.
+La legge di consenso è pesata dalla matrice di **adiacenza** del grafo. Il raggio di comunicazione coincide con `r_collab` = **55 m**, la portata del ranging inter-veicolare: è la stessa radio UWB a fornire sia la misura di distanza sia il canale dati, quindi non avrebbe senso che il consenso raggiungesse un vicino con cui il ranging è impossibile. La riduzione da 120 a 55 m rispetto alla Fase 3 è motivata in [fase_4/README4.md §1.1](../fase_4/README4.md).
 
 | Grandezza | Valore misurato |
 |---|---|

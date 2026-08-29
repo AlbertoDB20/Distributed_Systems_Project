@@ -1,7 +1,7 @@
 % =========================================================================
-% FASE 4: Navigazione in Ambiente Ostile e Localizzazione Collaborativa
+% FASE 5: Fusione Consistente con Covariance Intersection
 %
-% Flotta di N = 5 battipista, non più tutti interconnessi vicendevolmente (r_collab = 55m). I sensori ora operano a frequenze reali con paramentri reali e il canale di comunicazione introduce latenze. Documentazione: README4.md.
+% Stessa flotta e stesso ambiente della Fase 4: N = 5 battipista, grafo non completo (r_collab = 55 m), sensori a frequenze reali, canale con latenza e perdite. Cade l'ultima ipotesi ideale: la stima del vicino non e' piu' trattata come esatta. Il pacchetto trasporta anche Sigma_j e l'aggiornamento collaborativo passa alla Covariance Intersection. Documentazione: README5.md.
 % =========================================================================
 clear; clc; close all;
 
@@ -24,10 +24,10 @@ addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'common'));
 % Percorso ancorato allo script e non alla directory corrente: funziona sia
 % lanciando il file dall'IDE sia dalla radice del progetto.
 try
-    load(fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase4.mat'));
+    load(fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase5.mat'));
     disp('Ambiente caricato con successo.');
 catch
-    error('File ambiente_fase4.mat non trovato. Esegui prima genera_ambiente.m');
+    error('File ambiente_fase5.mat non trovato. Esegui prima genera_ambiente.m');
 end
 
 %% 2. PARAMETRI DI SISTEMA
@@ -346,15 +346,21 @@ end
 % t_{k+1}. Nessun blocco usa informazione futura.
 % Schema temporale completo: theory/TEORIA_ciclo_temporale.md.
 %
-% SPECIFICITA' DELLA FASE 3
+% SPECIFICITA' EREDITATE DALLE FASI PRECEDENTI
 % a) la copertura GPS e' valutata sulla posizione REALE a t_{k+1}: e' una
 %    proprieta' dell'ambiente, non della stima del veicolo;
 % b) i range inter-veicolari dipendono dalla ground truth di tutti i mezzi,
 %    quindi l'impianto e' una passata completa che precede quella dei sensori;
-% c) l'ancora mobile e' la stima del vicino a t_k propagata di un passo. Rompe
-%    il loop algebrico fra i filtri ed e' cio' che un canale reale rende
-%    disponibile; senza propagazione si confronterebbe una misura presa a
-%    t_{k+1} con una posizione riferita a t_k, con bias pari a |v_j|*Ts.
+% c) l'ancora mobile e' l'ultima stima ricevuta dal vicino, propagata in avanti
+%    per tutta l'eta' del pacchetto. Rompe il loop algebrico fra i filtri ed e'
+%    cio' che un canale reale rende disponibile; senza propagazione si
+%    confronterebbe una misura presa a t_{k+1} con una posizione riferita al
+%    passo di ricezione, con bias pari a |v_j|*eta*Ts.
+%
+% SPECIFICITA' DELLA FASE 5
+% d) l'aggiornamento e' spezzato in due: le misure indipendenti dalle stime
+%    altrui restano su guadagno di Kalman, quelle collaborative passano alla
+%    Covariance Intersection. Vedi il blocco (4)-(5) piu' sotto.
 disp('Simulazione in corso...');
 N_end = N_steps;    % ultimo campione valido, aggiornato all'arrivo
 
@@ -421,12 +427,30 @@ k_rx = ones(N_veh);
 eta_pacchetto = zeros(N_veh, N_veh, N_steps);   % eta' del dato usato, in passi
 n_persi = 0; n_inviati = 0;
 
+% DIAGNOSTICA DELLA COVARIANCE INTERSECTION
+% NaN dove la CI non e' intervenuta, cosi' le statistiche si scrivono con le
+% funzioni "nan*" senza dover mascherare a mano i passi a cielo aperto.
+gamma_hist   = nan(N_veh, N_steps);   % peso ottimo, uno per fusione
+infl_hist    = nan(N_veh, N_steps);   % max_j R_eff/sigma_collab^2, gonfiamento di R
+dev_pri_hist = nan(N_veh, N_steps);   % sqrt(u'*Sigma*u), incertezza a priori sulla congiungente
+dev_mis_hist = nan(N_veh, N_steps);   % sqrt(R_eff), incertezza della misura sulla stessa direzione
+n_ci_hist    = zeros(1, N_veh);       % fusioni eseguite da ciascun veicolo
+
 for k = 1:N_steps-1
 
     %% (1) BROADCAST SU CANALE NON IDEALE
     % Ogni veicolo pubblica il proprio punto di controllo, ricavato dalla
     % stima a t_k. p_ctrl e' il dato VERO trasmesso; quello che i vicini
     % ricevono e' in ritardo, e a volte non arriva affatto.
+    %
+    % CONTENUTO DEL PACCHETTO, ESTESO IN FASE 5
+    % fino alla Fase 4 il pacchetto conteneva la sola posizione stimata. Ora
+    % trasporta anche il blocco di posizione della covarianza, cioe' la coppia
+    % (p_j, Sigma_j(1:2,1:2)): da 2 a 5 numeri, essendo Sigma simmetrica.
+    % Estensione e Covariance Intersection vanno introdotte insieme: usare
+    % Sigma_j per gonfiare R lasciando il guadagno di Kalman standard
+    % tratterebbe l'incertezza del vicino come rumore INDIPENDENTE, che e' il
+    % doppio conteggio del Cap. 15 travestito da correzione.
     p_ctrl = zeros(2, N_veh);
     for i = 1:N_veh
         xe = fleet(i).x_est(:, k);
@@ -459,14 +483,22 @@ for k = 1:N_steps-1
     % ritardo: e' la condizione in cui vale il limite di stabilita' teorico.
     % L'ancora mobile viene invece propagata fino a t_{k+1}, come gia' in Fase 3,
     % ma ora per l'intera eta' del pacchetto e non per un solo passo.
+    % Sigma_rx e' la covarianza di posizione dichiarata dal vicino nel pacchetto
+    % ricevuto. NON viene propagata in avanti come la posizione: su un'eta'
+    % massima di 400 ms il modello di processo aggiunge circa 1.3e-4 m^2, cioe'
+    % lo 0.3% di una varianza di posizione tipica di 0.04-0.16 m^2. Propagarla
+    % costerebbe le Jacobiane del vicino per un contributo che si perde
+    % nell'arrotondamento.
     p_ctrl_rx = zeros(2, N_veh, N_veh);
     p_anc_rx  = zeros(2, N_veh, N_veh);
+    Sigma_rx  = zeros(2, 2, N_veh, N_veh);
     for i = 1:N_veh
         for j = 1:N_veh
             xj  = fleet(j).x_est(:, k_rx(i,j));
             dir = [cos(xj(3)); sin(xj(3))];
             p_ctrl_rx(:,i,j) = xj(1:2) + param.b * dir;
             p_anc_rx(:,i,j)  = xj(1:2) + xj(4) * dir * (k + 1 - k_rx(i,j)) * Ts;
+            Sigma_rx(:,:,i,j) = fleet(j).Sigma_hist(1:2, 1:2, k_rx(i,j));
         end
     end
 
@@ -651,10 +683,31 @@ for k = 1:N_steps-1
                 end
             end
             fleet(i).n_uwb_hist(k+1) = n_uwb_k;
+        end
 
-            % LOCALIZZAZIONE COLLABORATIVA: i vicini come ancore mobili
-            % sono riferimenti RELATIVI: vincolano la geometria della
-            % formazione ma non la posizione assoluta della flotta.
+        % STIMA 1: MISURE INDIPENDENTI, GUADAGNO DI KALMAN STANDARD
+        % AHRS, encoder, GPS e ancore fisse nascono da sensori propri del
+        % veicolo e da riferimenti la cui posizione e' nota a priori: nessuna
+        % di queste misure contiene informazione proveniente dalla rete, quindi
+        % l'ipotesi di scorrelazione dall'a priori regge e la CI sarebbe solo
+        % una perdita di ottimalita' gratuita. E' l'architettura nota come
+        % Split Covariance Intersection.
+        [x_upd, Sigma_upd] = ...
+            ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R_k, is_angle);
+
+        % STIMA 2: MISURE COLLABORATIVE, COVARIANCE INTERSECTION
+        % LOCALIZZAZIONE COLLABORATIVA: i vicini come ancore mobili. Sono
+        % riferimenti RELATIVI: vincolano la geometria della formazione ma non
+        % la posizione assoluta della flotta.
+        %
+        % Il blocco e' separato dal precedente perche' qui la correlazione con
+        % l'a priori esiste ed e' ignota: la posa del vicino contiene gia'
+        % informazione partita da questo stesso veicolo e tornata indietro
+        % lungo i cicli del grafo. La linearizzazione avviene attorno a x_upd e
+        % non a x_pred, perche' quello e' l'a priori di QUESTO aggiornamento.
+        if in_denied
+            z_ci = []; z_pred_ci = []; C_ci = []; R_ci = [];
+            s_pri = 0; s_mis = 0; n_vic = 0;
             for j = 1:N_veh
                 if i == j, continue; end
 
@@ -662,30 +715,59 @@ for k = 1:N_steps-1
                 % predizione usa invece l'ultimo pacchetto ricevuto da j,
                 % propagato in avanti per tutta la sua eta'. E' l'unica cosa
                 % che il veicolo i puo' conoscere.
-                %
-                % LIMITE NOTO: R contiene il solo rumore del sensore, e
-                % l'incertezza Sigma_j del vicino e' ignorata: il filtro
-                % risulta ottimista. Sigma_j non viene oggi trasmessa perche'
-                % senza Covariance Intersection non porterebbe beneficio. In
-                % Fase 5 il pacchetto la conterra', e le due cose vanno
-                % introdotte insieme (README.md §4, punto 4).
                 d_true = norm(xt_next(1:2) - fleet(j).x_true(1:2, k+1));
                 if d_true <= r_collab
                     p_j   = p_anc_rx(:, i, j);
-                    d_est = max(norm(x_pred(1:2) - p_j), 0.1);
+                    d_est = max(norm(x_upd(1:2) - p_j), 0.1);
+                    u_ij  = [(x_upd(1)-p_j(1))/d_est, (x_upd(2)-p_j(2))/d_est];
 
-                    z        = [z; d_true + sigma_collab * randn()];  %#ok<AGROW>
-                    z_pred   = [z_pred; d_est];                       %#ok<AGROW>
-                    C_k      = [C_k; (x_pred(1)-p_j(1))/d_est, ...
-                                     (x_pred(2)-p_j(2))/d_est, 0, 0, 0];  %#ok<AGROW>
-                    R_k      = blkdiag(R_k, sigma_collab^2);
-                    is_angle = [is_angle; false];                     %#ok<AGROW>
+                    % R EFFICACE (Carrillo-Arce et al., IROS 2013)
+                    % l'incertezza del vicino non e' isotropa: della sua
+                    % ellisse conta solo l'estensione LUNGO la congiungente,
+                    % perche' e' l'unica direzione che la misura di distanza
+                    % legge. La proiezione u'*Sigma_j*u la riduce a uno scalare
+                    % omogeneo a sigma_collab^2 e la somma e' lecita, essendo
+                    % il rumore del sensore indipendente dall'errore di j.
+                    R_eff = sigma_collab^2 + u_ij * Sigma_rx(:,:,i,j) * u_ij';
+
+                    z_ci      = [z_ci;      d_true + sigma_collab * randn()]; %#ok<AGROW>
+                    z_pred_ci = [z_pred_ci; d_est];                           %#ok<AGROW>
+                    C_ci      = [C_ci;      u_ij, 0, 0, 0];                   %#ok<AGROW>
+                    R_ci      = blkdiag(R_ci, R_eff);
+
+                    infl_hist(i, k+1) = max(infl_hist(i, k+1), R_eff / sigma_collab^2);
+
+                    % CONFRONTO CHE DECIDE gamma
+                    % la CI mette a confronto due incertezze sulla STESSA
+                    % direzione, quella della congiungente: quella dell'a
+                    % priori, sqrt(u'*Sigma*u), e quella della misura,
+                    % sqrt(R_eff). Il rapporto fra le due spiega da solo il
+                    % peso che l'ottimizzazione restituisce.
+                    s_pri = s_pri + sqrt(u_ij * Sigma_upd(1:2,1:2) * u_ij');
+                    s_mis = s_mis + sqrt(R_eff);
+                    n_vic = n_vic + 1;
                 end
+            end
+            if n_vic > 0
+                dev_pri_hist(i, k+1) = s_pri / n_vic;
+                dev_mis_hist(i, k+1) = s_mis / n_vic;
+            end
+
+            % I contributi dei vicini vengono fusi in un solo aggiornamento con
+            % un unico peso, e non uno alla volta: la CI sequenziale sgonfia
+            % l'a priori a ogni passaggio e risulterebbe piu' conservativa
+            % senza ragione, dato che i rumori dei ranging sono fra loro
+            % indipendenti e R_ci e' gia' diagonale a blocchi.
+            if ~isempty(z_ci)
+                [x_upd, Sigma_upd, g_ci] = ...
+                    aggiorna_ci(x_upd, Sigma_upd, z_ci, z_pred_ci, C_ci, R_ci);
+                gamma_hist(i, k+1) = g_ci;
+                n_ci_hist(i)       = n_ci_hist(i) + 1;
             end
         end
 
-        [fleet(i).x_est(:, k+1), fleet(i).Sigma] = ...
-            ekf_update(x_pred, Sigma_bar, z, z_pred, C_k, R_k, is_angle);
+        fleet(i).x_est(:, k+1)     = x_upd;
+        fleet(i).Sigma             = Sigma_upd;
         fleet(i).Sigma_hist(:,:,k+1) = fleet(i).Sigma;
 
         % TORSIOMETRO E ACCUMULO INFORMATIVO LOCALE (fase 1 del D-WLS)
@@ -764,7 +846,7 @@ end
 disp('Simulazione completata.');
 
 %% 8. FIGURE E RIEPILOGO
-% Percorso ancorato allo script: le figure finiscono in fase_4/risultati/ sia
+% Percorso ancorato allo script: le figure finiscono in fase_5/risultati/ sia
 % lanciando il file dall'IDE sia dalla radice del progetto.
 cartella_fase   = fileparts(mfilename('fullpath'));
 cartella_output = fullfile(cartella_fase, 'risultati');
@@ -786,7 +868,7 @@ kp = 1:passo_plot:N_end;
 mask_denied = fleet(1).in_denied_hist(1:N_end);
 
 % FIGURA 1: mappa di navigazione
-fig1 = figure('Name', 'Fase 3: Navigazione e Sensor Fusion', 'Color', 'w', 'Position', [100 100 800 800]);
+fig1 = figure('Name', 'Fase 5: Navigazione e Sensor Fusion', 'Color', 'w', 'Position', [100 100 800 800]);
 hold on; grid on; axis equal; axis([0 W_MAP 0 H_MAP]);
 
 th_c = linspace(0, 2*pi, 100);
@@ -1059,6 +1141,64 @@ fprintf('%-34s %.0f ms (%.0f%% del limite, %.0f ms)\n', 'Margine di stabilita co
         1e3*tau_med, 100*tau_med/tau_lim, 1e3*tau_lim);
 fprintf('%-34s %.3f m su sigma_collab = %.1f m\n', 'Errore ancora mobile a eta media', ...
         0.5*0.3*tau_med^2, sigma_collab);
+
+% RIEPILOGO A CONSOLE: COVARIANCE INTERSECTION
+% Le righe rispondono a tre domande distinte: quanto spesso la CI interviene,
+% quanto pesa l'a priori nella fusione, e se il risultato e' consistente.
+% L'ultima e' la sola che dice se la fase ha raggiunto il proprio scopo.
+%
+% NEES DI POSIZIONE: e' (p_true - p_est)' * Sigma_pos^-1 * (p_true - p_est),
+% cioe' il rapporto fra errore reale e covarianza dichiarata. Con due gradi di
+% liberta' il valore atteso e' 2. Sopra 2 il filtro e' OTTIMISTA, dichiara meno
+% incertezza di quanta ne abbia davvero ed e' la condizione da evitare; sotto 2
+% e' conservativo, che e' il verso sicuro e quello in cui la CI spinge.
+nees_cieco = nan(1, N_veh);
+for i = 1:N_veh
+    idx_cieco = find(fleet(i).in_denied_hist(1:N_end));
+    val = zeros(1, numel(idx_cieco));
+    for c = 1:numel(idx_cieco)
+        kc     = idx_cieco(c);
+        e_pos2 = fleet(i).x_true(1:2,kc) - fleet(i).x_est(1:2,kc);
+        val(c) = e_pos2' * (fleet(i).Sigma_hist(1:2,1:2,kc) \ e_pos2);
+    end
+    if ~isempty(val), nees_cieco(i) = mean(val); end
+end
+
+n_ci_tot  = sum(n_ci_hist);
+passi_cie = sum(arrayfun(@(s) sum(s.in_denied_hist(1:N_end)), fleet));
+grado_med = 2*mean(n_archi_hist(kk)) / N_veh;
+
+fprintf('\n--- COVARIANCE INTERSECTION ---\n');
+fprintf('%-34s %s\n', 'Grandezza', 'Valore');
+fprintf('%-34s %d su %d passi in zona cieca\n', 'Fusioni in forma CI', ...
+        n_ci_tot, passi_cie);
+fprintf('%-34s media %.3f, intervallo [%.3f, %.3f]\n', 'Peso gamma sull a priori', ...
+        mean(gamma_hist(:), 'omitnan'), min(gamma_hist(:)), max(gamma_hist(:)));
+fprintf('%-34s %d su %d (%.1f%%): gamma < 1\n', '   di cui misura accolta', ...
+        nnz(gamma_hist(:) < 1), n_ci_tot, 100*nnz(gamma_hist(:) < 1)/max(n_ci_tot,1));
+fprintf('%-34s media %.2fx, massimo %.2fx\n', 'Gonfiamento di R (R_eff/sigma^2)', ...
+        mean(infl_hist(:), 'omitnan'), max(infl_hist(:)));
+fprintf('%-34s a priori %.2f m contro misura %.2f m\n', 'Incertezza sulla congiungente', ...
+        mean(dev_pri_hist(:), 'omitnan'), mean(dev_mis_hist(:), 'omitnan'));
+fprintf('%-34s %.1fx a favore dell a priori (soglia sqrt(2))\n', '   rapporto', ...
+        mean(dev_mis_hist(:), 'omitnan') / mean(dev_pri_hist(:), 'omitnan'));
+
+% Da dove viene un a priori cosi' forte: in zona cieca il ramo delle ancore
+% fisse e' sempre attivo, e cinque ancore a sigma = 0.5 m ben distribuite
+% lasciano poco da aggiungere a un singolo range fra veicoli a sigma = 0.6 m.
+n_anc = [];
+for i = 1:N_veh
+    cieco = fleet(i).in_denied_hist(1:N_end);
+    n_anc = [n_anc, fleet(i).n_uwb_hist(cieco)];   %#ok<AGROW>
+end
+fprintf('%-34s %.1f in media, minimo %d\n', 'Ancore fisse viste in zona cieca', ...
+        mean(n_anc), min(n_anc));
+fprintf('%-34s 5 numeri = %d B, %.0f B/s ricevuti\n', 'Pacchetto scambiato', ...
+        5*8, 5*8*f_s*grado_med);
+fprintf('%-34s atteso 2.00 (>2 ottimista, <2 conservativo)\n', 'NEES di posizione in zona cieca');
+for i = 1:N_veh
+    fprintf('   V%d %s %25.2f\n', i, ruoli{i}, nees_cieco(i));
+end
 
 % RIEPILOGO A CONSOLE: grafo di comunicazione
 n_coppie = N_veh*(N_veh-1)/2;
