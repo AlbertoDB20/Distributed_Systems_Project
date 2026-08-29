@@ -242,6 +242,30 @@ toll_dwls  = 1e-4;                               % tolleranza sul residuo di con
 % 10%, un disaccordo residuo di 1e-4 e' gia' tre ordini di grandezza sotto cio'
 % che conta. Chiedere di piu' costerebbe cicli senza cambiare il risultato.
 %
+% CANALE DI COMUNICAZIONE: LATENZA E PERDITA DI PACCHETTI
+% Il pacchetto di posa scambiato a 10 Hz non arriva ne' subito ne' sempre.
+%
+% RITARDO: gaussiano centrato a meta' dell'intervallo, troncato agli estremi.
+% La latenza di una rete reale e' in verita' asimmetrica a destra (pavimento
+% fisico, coda da ritrasmissioni), ma la gaussiana simmetrica ha media piu'
+% alta a parita' di massimo, quindi stressa DI PIU' il sistema: e' il verso
+% sicuro. A 10 Hz il ritardo si quantizza comunque su tre soli valori (0, 1 o
+% 2 passi), e la forma della distribuzione conta poco.
+%
+% I 200 ms di massimo sono pessimistici per UWB, dove uno scambio TW-TOF dura
+% circa 1 ms, ma sotto un passo di campionamento il ritardo non sarebbe
+% rappresentabile. Sono anche il 35% del margine di stabilita' del consenso,
+% che per questa topologia vale pi/(2*K_cons*lambda_max(L)) = 0.565 s.
+ritardo_min = 0.0;                              % [s]
+ritardo_max = 0.2;                              % [s]
+ritardo_med = (ritardo_min + ritardo_max) / 2;  % [s] centro della gaussiana
+ritardo_dev = (ritardo_max - ritardo_min) / 6;  % [s] 3 sigma = mezzo intervallo
+perc_loss   = 0.5;                              % [%] pacchetti persi del tutto
+
+% Il modello vale per il broadcast delle pose a 10 Hz. I cicli di consenso del
+% D-WLS, che vivono sulla scala del millisecondo, restano ideali: perdite su
+% quel canale sono materia della Fase 6, dove entra la connettivita' congiunta.
+
 % NUMERO DI CICLI q
 % non e' una costante scritta a mano: consenso_dwls lo dimensiona come
 % q >= log(toll)/log(rho_2), imponendo almeno il diametro del grafo e troncando
@@ -388,18 +412,67 @@ F_ideale    = zeros(2);
 a_ideale    = zeros(2,1);
 dev_v_media = zeros(1, N_veh);   % sigma(v) medio dichiarato dall'EKF
 
+% STATO DEL CANALE
+% k_rx(i,j) e' l'indice del pacchetto piu' fresco che il veicolo i possiede del
+% vicino j. Non serve alcun buffer dedicato: la storia delle stime e' gia' in
+% fleet(j).x_est, e ricevere con ritardo significa semplicemente leggerla piu'
+% indietro. Su un pacchetto perduto l'indice non avanza e il dato invecchia.
+k_rx = ones(N_veh);
+eta_pacchetto = zeros(N_veh, N_veh, N_steps);   % eta' del dato usato, in passi
+n_persi = 0; n_inviati = 0;
+
 for k = 1:N_steps-1
 
-    %% (1) BROADCAST
+    %% (1) BROADCAST SU CANALE NON IDEALE
     % Ogni veicolo pubblica il proprio punto di controllo, ricavato dalla
-    % stima a t_k. E' il solo contenuto del pacchetto usato dal consenso.
+    % stima a t_k. p_ctrl e' il dato VERO trasmesso; quello che i vicini
+    % ricevono e' in ritardo, e a volte non arriva affatto.
     p_ctrl = zeros(2, N_veh);
     for i = 1:N_veh
         xe = fleet(i).x_est(:, k);
         p_ctrl(:, i) = xe(1:2) + param.b * [cos(xe(3)); sin(xe(3))];
     end
 
-    % Grafo di comunicazione a t_k, vincolato dalla portata radio.
+    % Consegna dei pacchetti: per ogni coppia ordinata (ricevente, mittente) si
+    % estrae una perdita e, se il pacchetto passa, un ritardo. L'indice non
+    % puo' arretrare, cosi' un pacchetto tardivo non sostituisce un dato piu'
+    % fresco gia' ricevuto.
+    for i = 1:N_veh
+        for j = 1:N_veh
+            if i == j
+                k_rx(i,j) = k;                  % il proprio dato non transita
+                continue;
+            end
+            n_inviati = n_inviati + 1;
+            if rand()*100 < perc_loss
+                n_persi = n_persi + 1;          % perso: il dato invecchia
+                continue;
+            end
+            d_s = min(max(ritardo_med + ritardo_dev*randn(), ritardo_min), ritardo_max);
+            k_rx(i,j) = max(k_rx(i,j), max(1, k - round(d_s/Ts)));
+        end
+    end
+    eta_pacchetto(:,:,k) = k - k_rx;
+
+    % Cosa ciascun veicolo CREDE degli altri, ricostruito dal pacchetto in suo
+    % possesso. Il consenso usa il dato cosi' com'e', senza compensare il
+    % ritardo: e' la condizione in cui vale il limite di stabilita' teorico.
+    % L'ancora mobile viene invece propagata fino a t_{k+1}, come gia' in Fase 3,
+    % ma ora per l'intera eta' del pacchetto e non per un solo passo.
+    p_ctrl_rx = zeros(2, N_veh, N_veh);
+    p_anc_rx  = zeros(2, N_veh, N_veh);
+    for i = 1:N_veh
+        for j = 1:N_veh
+            xj  = fleet(j).x_est(:, k_rx(i,j));
+            dir = [cos(xj(3)); sin(xj(3))];
+            p_ctrl_rx(:,i,j) = xj(1:2) + param.b * dir;
+            p_anc_rx(:,i,j)  = xj(1:2) + xj(4) * dir * (k + 1 - k_rx(i,j)) * Ts;
+        end
+    end
+
+    % Grafo di comunicazione a t_k, vincolato dalla portata radio. Si costruisce
+    % sulle posizioni CORRENTI perche' essere in portata e' un fatto fisico:
+    % il ritardo riguarda il contenuto del pacchetto, non la sua esistenza.
     % Di pesi_metropolis serve qui il solo rho2, come indicatore di velocita'
     % di convergenza: la legge di controllo e' in forma laplaciana e usa G.A.
     % La matrice Q entra invece nel D-WLS del blocco (6).
@@ -414,14 +487,6 @@ for k = 1:N_steps-1
     lambda_min_Q_hist(k)  = lambda_min_Q;
     rho2_hist(k)       = rho2;
     n_archi_hist(k)    = G.n_archi;
-
-    % Stime dei vicini propagate a t_{k+1}: sono le ancore mobili della
-    % localizzazione collaborativa (nota (c) in testa al ciclo).
-    p_ancora_mobile = zeros(2, N_veh);
-    for j = 1:N_veh
-        xj = fleet(j).x_est(:, k);
-        p_ancora_mobile(:, j) = xj(1:2) + xj(4) * [cos(xj(3)); sin(xj(3))] * Ts;
-    end
 
     %% (2) CONTROLLO e (3) IMPIANTO
     for i = 1:N_veh
@@ -452,7 +517,7 @@ for k = 1:N_steps-1
             % CONSENSO pesato dall'adiacenza: il vicino j contribuisce solo se
             % l'arco esiste, cioe' solo se e' in portata radio.
             if G.A(i,j) > 0
-                err_ij = (p_ctrl(:, i) - p_ctrl(:, j)) - Delta(:, i, j);
+                err_ij = (p_ctrl(:, i) - p_ctrl_rx(:, i, j)) - Delta(:, i, j);
                 u_cons = u_cons - K_cons * G.A(i,j) * err_ij;
             end
 
@@ -461,9 +526,9 @@ for k = 1:N_steps-1
             % forma piu' larga e' conservativa perche' non spegnerebbe la
             % repulsione se il vincolo venisse violato.
             if i ~= j
-                dist = norm(p_ctrl(:, i) - p_ctrl(:, j));
+                dist = norm(p_ctrl(:, i) - p_ctrl_rx(:, i, j));
                 if dist < d_safe && dist > 0.1
-                    grad_d  = (p_ctrl(:, i) - p_ctrl(:, j)) / dist;
+                    grad_d  = (p_ctrl(:, i) - p_ctrl_rx(:, i, j)) / dist;
                     rep_mag = k_rep * (1/dist - 1/d_safe) * (1/dist^2);
                     u_rep   = u_rep + rep_mag * grad_d;
                 end
@@ -594,8 +659,9 @@ for k = 1:N_steps-1
                 if i == j, continue; end
 
                 % La misura e' fisica, fra le posizioni reali a t_{k+1}; la sua
-                % predizione usa invece la stima condivisa del vicino, che e'
-                % l'unica cosa che il veicolo i puo' conoscere.
+                % predizione usa invece l'ultimo pacchetto ricevuto da j,
+                % propagato in avanti per tutta la sua eta'. E' l'unica cosa
+                % che il veicolo i puo' conoscere.
                 %
                 % LIMITE NOTO: R contiene il solo rumore del sensore, e
                 % l'incertezza Sigma_j del vicino e' ignorata: il filtro
@@ -605,7 +671,7 @@ for k = 1:N_steps-1
                 % introdotte insieme (README.md §4, punto 4).
                 d_true = norm(xt_next(1:2) - fleet(j).x_true(1:2, k+1));
                 if d_true <= r_collab
-                    p_j   = p_ancora_mobile(:, j);
+                    p_j   = p_anc_rx(:, i, j);
                     d_est = max(norm(x_pred(1:2) - p_j), 0.1);
 
                     z        = [z; d_true + sigma_collab * randn()];  %#ok<AGROW>
@@ -968,6 +1034,31 @@ for i = 1:N_veh
             mean(e_pos(~cieco)), mean(e_pos(cieco)), ...
             mean(tr_i(~cieco)), mean(tr_i(cieco)));
 end
+
+% RIEPILOGO A CONSOLE: canale di comunicazione
+% L'eta' del pacchetto e' cio' che conta davvero: somma il ritardo di consegna
+% e i passi trascorsi dall'ultimo pacchetto arrivato. E' l'unica grandezza che
+% il filtro subisce.
+eta = eta_pacchetto(:,:,kk);
+eta = eta(~repmat(logical(eye(N_veh)), 1, 1, numel(kk)));   % esclude la diagonale
+tau_med = mean(eta)*Ts;
+tau_max = max(eta)*Ts;
+tau_lim = pi / (2*K_cons*mean(lambda_max_L_hist(kk)));      % Olfati-Saber & Murray
+
+fprintf('\n--- CANALE DI COMUNICAZIONE ---\n');
+fprintf('%-34s %s\n', 'Grandezza', 'Valore');
+fprintf('%-34s %.1f%% richiesto, %.2f%% misurato\n', 'Pacchetti persi', ...
+        perc_loss, 100*n_persi/max(n_inviati,1));
+fprintf('%-34s %.0f-%.0f ms, media %.0f ms\n', 'Ritardo di consegna', ...
+        1e3*ritardo_min, 1e3*ritardo_max, 1e3*ritardo_med);
+fprintf('%-34s %.0f%% / %.0f%% / %.0f%% dei pacchetti\n', 'Ritardo quantizzato 0/1/2 passi', ...
+        100*mean(eta==0), 100*mean(eta==1), 100*mean(eta>=2));
+fprintf('%-34s %.0f ms in media, %.0f ms al massimo\n', 'Eta del dato usato', ...
+        1e3*tau_med, 1e3*tau_max);
+fprintf('%-34s %.0f ms (%.0f%% del limite, %.0f ms)\n', 'Margine di stabilita consumato', ...
+        1e3*tau_med, 100*tau_med/tau_lim, 1e3*tau_lim);
+fprintf('%-34s %.3f m su sigma_collab = %.1f m\n', 'Errore ancora mobile a eta media', ...
+        0.5*0.3*tau_med^2, sigma_collab);
 
 % RIEPILOGO A CONSOLE: grafo di comunicazione
 n_coppie = N_veh*(N_veh-1)/2;

@@ -6,9 +6,9 @@ La Fase 4 rimuove le assunzioni ideali rimaste nell'architettura, una alla volta
 | Passo | Contenuto | Stato |
 |---|---|---|
 | **4.0** | Flotta a $N = 5$ con **grafo non completo**: alcuni mezzi non si vedono | **fatto** |
-| 4.1 | Sensori alle frequenze reali (IMU veloce, GPS lento): architettura multi-rate | da fare |
-| 4.2 | Latenze di canale e *timestamping*, con reinserimento retroattivo nel buffer dell'EKF | da fare |
-| 4.3 | GPS di qualità uniforme: le zone d'ombra dipendono solo dalla posizione spaziale | da fare |
+| **4.1** | Sensori alle **frequenze reali**: il GNSS diventa più lento del passo | **fatto** |
+| **4.2** | Canale con **latenza e perdita di pacchetti** | **fatto** |
+| 4.3 | GPS di qualità uniforme per tutti i veicoli | da fare |
 
 ### 1.1 Che cosa cambia col passo 4.0
 
@@ -53,6 +53,104 @@ $$K_{cons} = \frac{1}{\tau\,\lambda_2(L)} = \frac{1}{2.22 \cdot 0.697} = 0.646$$
 con margine di discretizzazione $K_{cons} T_s \lambda_{max} = 0.28$, ben sotto il limite di stabilità pari a 2. In simulazione $\tau$ risulta effettivamente 2.22 s.
 
 **È il punto in cui $\lambda_2(L)$ smette di essere un indicatore e diventa un parametro di progetto.** Fino alla Fase 3 la connettività algebrica veniva calcolata, graficata e commentata; qui viene *usata* per dimensionare un guadagno.
+
+### 1.4 Passo 4.1 — Sensori alle frequenze reali
+
+Il passo di simulazione resta **10 Hz**. Ogni sensore viene però trattato per quello che è: chi lavora più in fretta del passo si legge a 10 Hz senza penalità, chi lavora più piano fornisce una misura solo ogni $N$ passi.
+
+| Sensore | Modello | Frequenza nativa | Trattamento a 10 Hz |
+|---|---|---|---|
+| AHRS (heading, giroscopio) | **Xsens MTi-3** | 100 Hz interni | letto a 10 Hz, $\sigma$ di targa invariata |
+| Velocità cingoli | sensore Hall sul pignone di trazione | conteggio impulsi | finestra di 100 ms = il passo |
+| Ranging | **Qorvo DW1000** | ~1 ms per scambio TW-TOF | 9 scambi = 9 ms, sta nel passo |
+| GNSS Master | **u-blox ZED-F9P** (RTK) | fino a 20 Hz, usato a **5 Hz** | 1 fix ogni **2** passi |
+| GNSS Slave | **u-blox NEO-M8N** | **1 Hz** nominale | 1 fix ogni **10** passi |
+
+Due scelte vanno motivate, perché la tentazione di fare il contrario è forte.
+
+**L'AHRS non va riscalato.** Un MTi-3 filtra internamente a 100 Hz e restituisce un assetto già elaborato: la $\sigma$ di targa (2° RMS su yaw) vale alla frequenza a cui lo si interroga. Dividere $R$ per 10, come se si mediassero dieci campioni grezzi indipendenti, sarebbe sbagliato due volte — la media è già stata fatta a bordo del sensore, e l'heading nel frattempo ruota, quindi mediarlo introdurrebbe un bias.
+
+**Gli encoder non hanno una frequenza, hanno una finestra.** Un sensore a conteggio di impulsi integra su un intervallo: 100 ms è esattamente ciò che il passo di simulazione già rappresenta.
+
+**Resta il solo GNSS più lento del passo, e va decimato.** Campionarlo a 10 Hz significherebbe dargli fino a dieci volte le misure che produce, cioè dichiarare un ricevitore migliore di quello montato: con un NEO-M8N a 1 Hz l'equivalente sarebbe $\sigma_{eff} = 2.0/\sqrt{10} = 0.63$ m anziché 2.0 m.
+
+Nel codice la distinzione fra "il segnale esiste" e "il ricevitore ha prodotto una soluzione" è tenuta separata:
+
+```matlab
+fix_gps = ~in_denied && mod(k, fleet(i).passi_gps) == 0;
+```
+
+`in_denied` resta una proprietà della mappa, e continua ad alimentare le statistiche di copertura e le fasce ombreggiate nei grafici. La conseguenza operativa è che uno Slave a cielo aperto passa il **90% dei passi in sola predizione**, sostenuto da AHRS ed encoder.
+
+### 1.5 Passo 4.2 — Canale con latenza e perdite
+
+Il pacchetto di posa scambiato a 10 Hz non arriva né subito né sempre.
+
+| Parametro | Valore |
+|---|---|
+| Ritardo | gaussiano, $\mathcal{N}(100\text{ ms},\ (33\text{ ms})^2)$ troncato a $[0, 200]$ ms |
+| Perdita di pacchetti | 0.5% |
+
+**Sulla forma della distribuzione.** Le latenze di una rete reale sono asimmetriche a destra: c'è un pavimento fisico dato dal tempo di trasmissione, la moda sta vicino a quel pavimento, e la coda lunga viene da ritrasmissioni e collisioni. Una gaussiana simmetrica non è fedele, ma è **conservativa** — a parità di massimo ha media più alta, quindi stressa di più il sistema — e a 10 Hz il ritardo si quantizza comunque su tre soli valori (0, 1 o 2 passi), il che rende la forma in gran parte irrilevante. I 200 ms di massimo sono pessimistici per UWB, dove uno scambio dura ~1 ms, ma sotto un passo di campionamento il ritardo non sarebbe rappresentabile.
+
+**Non serve il timestamping**, e non è una scorciatoia: è che il progetto non ha il problema che il timestamping risolve. Vanno distinti due ritardi.
+
+- **Posa dell'ancora vecchia.** Il pacchetto del vicino arriva vecchio, ma la misura di distanza la fa la propria radio *adesso*: è fresca. Stale è solo la posizione usata per predirla, e si rimedia propagandola in avanti col modello di moto — esattamente ciò che la Fase 3 già faceva per un passo.
+- **Misura fuori sequenza (OOSM).** Una misura *del proprio stato*, presa nel passato, che arriva adesso. Lì servirebbe tornare indietro nel buffer, applicarla al momento giusto e ri-propagare.
+
+Il caso del progetto è il primo. Nessun veicolo trasmette misure *altrui*: trasmette la propria posa, che il ricevente usa come ancora. Niente buffer di $(\hat x, \Sigma)$, niente retrodizione.
+
+E il buffer, di fatto, esiste già: `fleet(j).x_est` è l'intera storia delle stime. Ricevere con ritardo significa semplicemente **leggerla più indietro**:
+
+```matlab
+k_rx(i,j) = max(k_rx(i,j), max(1, k - round(d_s/Ts)));
+```
+
+`k_rx(i,j)` è l'indice del pacchetto più fresco che $i$ possiede di $j$. Il `max` esterno impedisce che un pacchetto tardivo sostituisca un dato più recente già ricevuto. Su un pacchetto perso l'indice non avanza e il dato invecchia da solo: **ritardo e perdita si compongono in un'unica grandezza**, l'*età* del dato usato, che è l'unica cosa che il filtro subisce.
+
+Il consenso usa il dato ricevuto **senza compensare** il ritardo — è la condizione in cui vale il limite di stabilità teorico — mentre l'ancora mobile viene propagata fino a $t_{k+1}$ per tutta la sua età.
+
+Il modello vale per il broadcast delle pose a 10 Hz. I cicli di consenso del D-WLS, che vivono sulla scala del millisecondo, restano ideali: perdite su quel canale sono materia della Fase 6, dove entra la connettività congiunta.
+
+### 1.6 Risultati dei passi 4.1 e 4.2
+
+**Il canale si comporta come richiesto.**
+
+| Grandezza | Valore misurato |
+|---|---|
+| Pacchetti persi | 0.48% (richiesto 0.5%) |
+| Ritardo quantizzato 0 / 1 / 2 passi | 7% / 87% / 7% |
+| Età del dato usato | **100 ms in media, 400 ms al massimo** |
+| Margine di stabilità consumato | 18% in media, 71% nel caso peggiore (limite 565 ms) |
+| Errore dell'ancora mobile all'età media | 0.002 m, contro $\sigma_{collab} = 0.6$ m |
+
+L'età massima di 400 ms nasce da due passi di ritardo più due passi di perdite consecutive — un evento raro (probabilità $2.5\cdot10^{-5}$ per coppia e per passo) ma che su 240 000 tentativi si presenta qualche volta. È il caso peggiore, e mangia il **71%** del margine di stabilità.
+
+**Sull'accuratezza il GNSS lento domina, il ritardo no.**
+
+| Veicolo | MAE con GPS | MAE in zona cieca | $\mathrm{tr}(\Sigma_{pos})$ con GPS / cieca |
+|---|---|---|---|
+| V1 (Master, ZED-F9P a 5 Hz) | 0.070 m | 0.078 m | 0.0140 / 0.0129 m² |
+| V2 (Slave, NEO-M8N a 1 Hz) | 0.347 m | 0.086 m | 0.3321 / 0.0124 m² |
+| V3 | 0.332 m | 0.073 m | 0.3341 / 0.0131 m² |
+| V4 | 0.311 m | 0.084 m | 0.3323 / 0.0163 m² |
+| V5 | 0.389 m | 0.075 m | 0.3330 / 0.0143 m² |
+
+Il Master perde poco (0.061 → 0.070 m): a 5 Hz il fix RTK arriva ancora abbastanza spesso. Gli Slave passano da 0.19–0.21 a **0.31–0.39 m**, quasi il doppio, perché fra un fix e l'altro dead-reckonano per un secondo intero.
+
+**In zona cieca invece non cambia quasi nulla** (0.073–0.089 m, era 0.074–0.089): là il riferimento è il ranging UWB, che gira a 10 Hz e non è stato toccato.
+
+Il risultato già osservato al passo 4.0 ne esce **molto rafforzato**: gli Slave ora stimano **quattro volte meglio al buio che a cielo aperto**, e la covarianza dichiarata concorda con un fattore 27 ($0.332$ contro $0.0124$ m²). Non è un paradosso, è la conseguenza diretta di confrontare un NEO-M8N a 1 Hz con cinque ancore UWB a 10 Hz e $\sigma = 0.5$ m.
+
+**Il ritardo costa velocità, non accuratezza.** La missione passa da 1078.5 a **1218.1 secondi**, il 13% più lenta, a parità di tutto il resto. Il consenso agisce su errori di formazione vecchi di 100 ms, il che equivale a ridurre il guadagno d'anello: la flotta resta stabile — si consuma il 18% del margine — ma reagisce più pigramente. È l'unico effetto del passo 4.2 che si vede sui numeri, e va attribuito al ritardo e non alle perdite.
+
+**Lo 0.5% di perdita è di fatto invisibile.** Con quella probabilità l'età media del dato cresce di 0.005 passi, cioè mezzo millisecondo: sotto ogni soglia di rilevabilità. Per vedere un effetto servirebbe il 5–10%, che è materia della Fase 6.
+
+### 1.7 Conseguenza da registrare: l'architettura a commutazione ora costa
+
+Il ramo UWB scatta solo dentro le zone cieche. Uno Slave a cielo aperto, nel 90% dei passi in cui non ha un fix GNSS, **non usa le ancore anche quando le ha in portata**: procede in sola predizione.
+
+Era una semplificazione accettabile con il GPS a 10 Hz. Con il GNSS a 1 Hz costa 0.35 m di errore là dove le ancore ne darebbero 0.08. La correzione è una riga — sostituire il ramo `elseif in_denied` con una condizione sulla visibilità delle ancore — ed è ora sostenuta dai dati, non da un'intuizione. È il candidato naturale al prossimo intervento.
 
 ## 2. Navigazione e Path-Following
 Il veicolo Master (Veicolo 1) guida la formazione lungo il percorso specificato in `path_points`. Viene implementato un algoritmo di inseguimento del target virtuale (*Virtual Target Tracking*):
@@ -121,15 +219,14 @@ Resta il 9.4% di campioni in cui **nessun** veicolo dispone di riferimenti assol
 
 **c) Accuratezza della stima di posa.** Errore medio di posizione e traccia della covarianza, separati fra copertura GPS e zona cieca, su missione completa (1078.6 s):
 
-| Veicolo | MAE con GPS | MAE in zona cieca | $\mathrm{tr}(\Sigma_{pos})$ con GPS / cieca |
-|---|---|---|---|
-| V1 (Master, GPS RTK) | 0.061 m | 0.077 m | 0.0094 / 0.0129 m² |
-| V2 (Slave, GPS standard) | 0.190 m | 0.081 m | 0.1015 / 0.0123 m² |
-| V3 (Slave, GPS standard) | 0.213 m | 0.074 m | 0.1016 / 0.0131 m² |
-| V4 (Slave, GPS standard) | 0.199 m | 0.089 m | 0.1015 / 0.0162 m² |
-| V5 (Slave, GPS standard) | 0.205 m | 0.075 m | 0.1013 / 0.0142 m² |
+I valori aggiornati ai passi 4.1 e 4.2 sono nella tabella del §1.6. Prima della decimazione del GNSS, con tutti i sensori a 10 Hz, valevano:
 
-**Per gli Slave la stima in zona GPS-denied è più accurata che a cielo aperto** — 0.074–0.089 m contro 0.190–0.213 m — e la covarianza dichiarata concorda, scendendo di un fattore 7. Non è un paradosso: il ranging UWB a $\sigma = 0.5$ m da cinque ancore geometricamente ben distribuite porta più informazione di un GPS standard a $\sigma = 2.0$ m. Il risultato suggerisce che in un'area attrezzata con ancore converrebbe fondere UWB e GPS *simultaneamente* anziché commutare fra i due; l'architettura a $C$ di dimensione variabile lo consente già senza modifiche strutturali.
+| Veicolo | MAE con GPS | MAE in zona cieca |
+|---|---|---|
+| V1 (Master, GPS RTK) | 0.061 m | 0.077 m |
+| V2–V5 (Slave, GPS standard) | 0.190–0.213 m | 0.074–0.089 m |
+
+**Per gli Slave la stima in zona GPS-denied è più accurata che a cielo aperto**, e la covarianza dichiarata concorda. Il divario, già presente qui, si allarga a un fattore 4 con il GNSS alla sua frequenza reale. Non è un paradosso: il ranging UWB a $\sigma = 0.5$ m da cinque ancore geometricamente ben distribuite porta più informazione di un GPS standard a $\sigma = 2.0$ m. Il risultato suggerisce che in un'area attrezzata con ancore converrebbe fondere UWB e GPS *simultaneamente* anziché commutare fra i due; l'architettura a $C$ di dimensione variabile lo consente già senza modifiche strutturali.
 
 Il fatto che i quattro Slave siano fra loro indistinguibili, comprese le due ali esterne che hanno un solo vicino ciascuna, indica che il grafo sparso non degrada la localizzazione: le ancore fisse restano il riferimento dominante in zona cieca, e il ranging collaborativo è un contributo aggiuntivo, non il sostegno principale.
 
