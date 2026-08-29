@@ -196,14 +196,8 @@ x_terr_true = [0.09; 0.005];   % [-] e [s^2/m^2] verita' di terreno, ignota ai v
 T_scambio  = 1e-3;                               % [s] durata di uno scambio TW-TOF
 quota_dwls = 0.5;                                % frazione del passo riservata al D-WLS
 q_max_dwls = floor(quota_dwls * Ts / T_scambio); % cicli sostenibili in un passo
-toll_dwls  = 1e-4;                               % tolleranza sul residuo di consenso
+toll_dwls  = 1e-9;                               % tolleranza sul residuo di consenso
 
-% TOLLERANZA
-% il residuo di consenso deve essere trascurabile rispetto all'incertezza della
-% stima, non piccolo in assoluto: con dev.std(c_terr)/c_terr dell'ordine del
-% 10%, un disaccordo residuo di 1e-4 e' gia' tre ordini di grandezza sotto cio'
-% che conta. Chiedere di piu' costerebbe cicli senza cambiare il risultato.
-%
 % NUMERO DI CICLI q
 % non e' una costante scritta a mano: consenso_dwls lo dimensiona come
 % q >= log(toll)/log(rho_2), imponendo almeno il diametro del grafo e troncando
@@ -297,27 +291,9 @@ L_imu = chol(R_imu)';
 L_enc = chol(R_enc)';
 
 % Diagnostica del grafo di comunicazione, un campione per passo
-% SPETTRI DEL GRAFO: DUE MATRICI, DUE LETTURE
-% L = D - A pesa gli archi con l'adiacenza ed e' l'oggetto del CONTROLLO DI
-% FORMAZIONE (tempo continuo): lambda_1(L) = 0 sempre, mol_lambda_1(L) e' il
-% numero di componenti, lambda_2(L) da' tau = 1/(K_cons*lambda_2(L)).
-% Q pesa gli archi con Metropolis ed e' l'oggetto del D-WLS (tempo discreto):
-% lambda_1(Q) = 1 sempre, mol_lambda_1(Q) e' il numero di componenti, e
-% rho_2 = |lambda_2(Q)| e' il fattore di convergenza. Gli autovalori di Q sono
-% ordinati per MODULO decrescente, quindi il test sulle oscillazioni va fatto su
-% lambda_min(Q) e non su lambda_n(Q), che con questo ordinamento e' quello piu'
-% vicino a zero.
-% Le due letture si muovono in verso opposto: rete ben collegata significa
-% lambda_2(L) grande e rho_2 piccolo. Vedi theory/TEORIA_consenso_su_grafi.md.
-lambda1_L_hist     = zeros(1, N_steps);      % lambda_1(L), sempre nullo
-lambda2_L_hist     = zeros(1, N_steps);      % lambda_2(L), connettivita' algebrica
-lambda_max_L_hist  = zeros(1, N_steps);      % lambda_max(L), per il margine di discretizzazione
-mol_lambda1_L_hist = zeros(1, N_steps);      % mol_lambda_1(L) = componenti connesse
-lambda_Q_hist      = zeros(N_veh, N_steps);  % spettro di Q, per MODULO decrescente
-lambda_min_Q_hist  = zeros(1, N_steps);      % autovalore piu' negativo di Q
-mol_lambda1_Q_hist = zeros(1, N_steps);      % mol_lambda_1(Q) = componenti connesse
-rho2_hist          = zeros(1, N_steps);      % rho_2 = max_{i>=2} |lambda_i(Q)|
-n_archi_hist       = zeros(1, N_steps);      % archi attivi
+lambda2_hist = zeros(1, N_steps);   % connettivita' algebrica
+rho2_hist    = zeros(1, N_steps);   % essential spectral radius dei pesi Metropolis
+n_archi_hist = zeros(1, N_steps);   % archi attivi
 
 % Storici della stima distribuita del terreno, un round per passo
 dwls.t         = nan(1, N_steps);
@@ -362,16 +338,10 @@ for k = 1:N_steps-1
     % di convergenza: la legge di controllo e' in forma laplaciana e usa G.A.
     % La matrice Q entra invece nel D-WLS del blocco (6).
     G = costruisci_grafo(p_ctrl, R_c_comm);
-    [~, rho2, lambda_Q, mol_lambda1_Q, lambda_min_Q] = pesi_metropolis(G.A);
-    lambda1_L_hist(k)     = G.lambda1_L;
-    lambda2_L_hist(k)     = G.lambda2_L;
-    lambda_max_L_hist(k)  = G.lambda_L(end);
-    mol_lambda1_L_hist(k) = G.mol_lambda1_L;
-    lambda_Q_hist(:,k)  = lambda_Q;
-    mol_lambda1_Q_hist(k) = mol_lambda1_Q;
-    lambda_min_Q_hist(k)  = lambda_min_Q;
-    rho2_hist(k)       = rho2;
-    n_archi_hist(k)    = G.n_archi;
+    [~, rho2] = pesi_metropolis(G.A);
+    lambda2_hist(k) = G.lambda2;
+    rho2_hist(k)    = rho2;
+    n_archi_hist(k) = G.n_archi;
 
     % Stime dei vicini propagate a t_{k+1}: sono le ancore mobili della
     % localizzazione collaborativa (nota (c) in testa al ciclo).
@@ -546,13 +516,6 @@ for k = 1:N_steps-1
                 % La misura e' fisica, fra le posizioni reali a t_{k+1}; la sua
                 % predizione usa invece la stima condivisa del vicino, che e'
                 % l'unica cosa che il veicolo i puo' conoscere.
-                %
-                % LIMITE NOTO: R contiene il solo rumore del sensore, e
-                % l'incertezza Sigma_j del vicino e' ignorata: il filtro
-                % risulta ottimista. Sigma_j non viene oggi trasmessa perche'
-                % senza Covariance Intersection non porterebbe beneficio. In
-                % Fase 5 il pacchetto la conterra', e le due cose vanno
-                % introdotte insieme (README.md §4, punto 4).
                 d_true = norm(xt_next(1:2) - fleet(j).x_true(1:2, k+1));
                 if d_true <= r_collab
                     p_j   = p_ancora_mobile(:, j);
@@ -657,14 +620,6 @@ if ~exist(cartella_output, 'dir'), mkdir(cartella_output); end
 colors  = ['b', 'r', 'g'];
 t_plot  = t(1:N_end);
 
-% DECIMAZIONE DEL DISEGNO
-% con decine di migliaia di campioni il tracciamento delle bande riempite
-% diventa piu' lento della simulazione. Si disegnano al piu' 4000 punti, che a
-% schermo sono indistinguibili dal dato completo. Le STATISTICHE restano
-% calcolate su tutti i campioni: si decima solo cio' che va sullo schermo.
-passo_plot = max(1, ceil(N_end / 4000));
-kp = 1:passo_plot:N_end;
-
 % Fasce di oscuramento del Master, usate come sfondo nei grafici temporali:
 % senza, l'andamento della covarianza sembrerebbe casuale.
 mask_denied = fleet(1).in_denied_hist(1:N_end);
@@ -703,7 +658,7 @@ for i = 1:N_veh
     err_pos = sqrt(err_x.^2 + err_y.^2);        % norma dell'errore sul piano [m]
 
     ombreggia_denied(t_plot, fleet(i).in_denied_hist(1:N_end), [0, max(err_pos)*1.1]);
-    plot(t_plot(kp), err_pos(kp), colors(i), 'LineWidth', 1.2); grid on;
+    plot(t_plot, err_pos, colors(i), 'LineWidth', 1.2); grid on;
     title(sprintf('V%d: Errore di Posizione Scalare ||e_{pos}||', i));
     ylabel('Errore [m]');
 end
@@ -718,17 +673,17 @@ for i = 1:N_veh
     err_th = wrapToPi(fleet(i).x_true(3,1:N_end) - fleet(i).x_est(3,1:N_end));
 
     subplot(3, N_veh, i);
-    plot(t_plot(kp), err_x(kp), colors(i), 'LineWidth', 1); grid on; hold on;
+    plot(t_plot, err_x, colors(i), 'LineWidth', 1); grid on; hold on;
     yline(0, 'k--', 'LineWidth', 1.5);
     title(sprintf('V%d: Errore X', i));  if i==1; ylabel('[m]'); end
 
     subplot(3, N_veh, i + N_veh);
-    plot(t_plot(kp), err_y(kp), colors(i), 'LineWidth', 1); grid on; hold on;
+    plot(t_plot, err_y, colors(i), 'LineWidth', 1); grid on; hold on;
     yline(0, 'k--', 'LineWidth', 1.5);
     title(sprintf('V%d: Errore Y', i));  if i==1; ylabel('[m]'); end
 
     subplot(3, N_veh, i + 2*N_veh);
-    plot(t_plot(kp), err_th(kp), colors(i), 'LineWidth', 1); grid on; hold on;
+    plot(t_plot, err_th, colors(i), 'LineWidth', 1); grid on; hold on;
     yline(0, 'k--', 'LineWidth', 1.5);
     title(sprintf('V%d: Errore \\theta', i));
     xlabel('Tempo [s]');  if i==1; ylabel('[rad]'); end
@@ -742,13 +697,13 @@ for i = 1:N_veh
     mag_rep  = vecnorm(fleet(i).u_rep_hist(:,  1:N_end));
 
     subplot(2, N_veh, i);
-    plot(t_plot(kp), mag_cons(kp), colors(i), 'LineWidth', 1.5); grid on;
+    plot(t_plot, mag_cons, colors(i), 'LineWidth', 1.5); grid on;
     title(sprintf('V%d: Sforzo Consenso (|F_{cons}|)', i));
     xlabel('Tempo [s]');  if i==1; ylabel('Magnitudo [m/s]'); end
     ylim([0, max(0.1, max(mag_cons)*1.2)]);
 
     subplot(2, N_veh, i + N_veh);
-    plot(t_plot(kp), mag_rep(kp), 'k', 'LineWidth', 1.5); grid on;
+    plot(t_plot, mag_rep, 'k', 'LineWidth', 1.5); grid on;
     title(sprintf('V%d: Forza Repulsiva (|F_{rep}|)', i));
     xlabel('Tempo [s]');  if i==1; ylabel('Magnitudo [m/s]'); end
     ylim([0, max(0.1, max(mag_rep)*1.2)]);
@@ -767,7 +722,7 @@ for i = 1:N_veh
     % ancore UWB in vista. I vicini non contano, perche' vincolano la geometria
     % della formazione ma non la posizione assoluta della flotta.
     n_ass = double(~fleet(i).in_denied_hist(1:N_end)) + fleet(i).n_uwb_hist(1:N_end);
-    plot(t_plot(kp), n_ass(kp), colors(i), 'LineWidth', 1.2, 'DisplayName', sprintf('V%d', i));
+    plot(t_plot, n_ass, colors(i), 'LineWidth', 1.2, 'DisplayName', sprintf('V%d', i));
 end
 ylabel('N. riferimenti assoluti'); title('Riferimenti assoluti disponibili (GPS oppure ancore UWB in vista)');
 legend('Location','best'); ylim([-0.2, max(2, size(uwb_opt,1)) + 0.5]);
@@ -784,7 +739,7 @@ lim_lo = 10^floor(log10(min(tr(:))));
 lim_hi = 10^ceil(log10(max(tr(:))));
 ombreggia_denied(t_plot, mask_denied, [lim_lo, lim_hi]);
 for i = 1:N_veh
-    plot(t_plot(kp), tr(i,kp), colors(i), 'LineWidth', 1.2, 'DisplayName', sprintf('V%d', i));
+    plot(t_plot, tr(i,:), colors(i), 'LineWidth', 1.2, 'DisplayName', sprintf('V%d', i));
 end
 xlabel('Tempo [s]'); ylabel('tr(\Sigma_{pos})  [m^2]');
 title('Traccia del blocco posizione della covarianza (sfondo: Master in zona GPS-denied)');
@@ -818,9 +773,9 @@ for i = 1:N_veh
         if c == 3, e = wrapToPi(e); end
         s3 = 3 * sqrt(squeeze(fleet(i).Sigma_hist(c,c,1:N_end)))';
 
-        fill([t_plot(kp), fliplr(t_plot(kp))], [s3(kp), fliplr(-s3(kp))], [0.85 0.85 0.85], ...
+        fill([t_plot, fliplr(t_plot)], [s3, fliplr(-s3)], [0.85 0.85 0.85], ...
              'EdgeColor', 'none', 'HandleVisibility', 'off');
-        plot(t_plot(kp), e(kp), colors(i), 'LineWidth', 0.8);
+        plot(t_plot, e, colors(i), 'LineWidth', 0.8);
         ylim([-lim_asse(c), lim_asse(c)]);
         fuori = 100 * mean(abs(e) > s3);
         title(sprintf('V%d: %s  (fuori 3\\sigma: %.1f%%)', i, etichette{c}, fuori));
@@ -830,33 +785,20 @@ end
 exportgraphics(fig6, fullfile(cartella_output, '6_bound_3sigma.png'), 'Resolution', 300);
 
 % FIGURA 7: diagnostica del grafo di comunicazione
-kk  = 1:(N_end-1);          % statistiche su tutti i campioni
-kkp = kk(1:passo_plot:end);  % sottoinsieme disegnato
+kk = 1:(N_end-1);
 fig7 = figure('Name','Grafo di Comunicazione: connettivita e convergenza','Color','w', ...
               'Position', [200, 200, 1000, 600]);
 
 subplot(3,1,1);
-plot(t(kkp), lambda2_L_hist(kkp), 'b', 'LineWidth', 1.5); grid on; hold on;
+plot(t(kk), lambda2_hist(kk), 'b', 'LineWidth', 1.5); grid on; hold on;
 yline(N_veh, 'k--', 'LineWidth', 1);
 ylabel('\lambda_2(L)'); ylim([0, N_veh*1.3]);
 title(sprintf('Connettivita algebrica (K_%d completo: \\lambda_2 = %d)', N_veh, N_veh));
 
-% Spettro di Q con le tre letture: lambda_1(Q) = 1 (equilibrio garantito),
-% rho_2 = |lambda_2(Q)| (velocita'), lambda_min(Q) (oscillazioni, che con
-% Metropolis non si presentano mai perche' la diagonale e' strettamente
-% positiva). Autovalori ordinati per modulo decrescente.
-subplot(3,1,2); hold on; grid on;
-for r_idx = 1:N_veh
-    plot(t(kkp), lambda_Q_hist(r_idx,kkp), 'Color', [0.6 0.6 0.6], 'LineWidth', 0.8, ...
-         'HandleVisibility', 'off');
-end
-plot(t(kkp), lambda_Q_hist(1,kkp),  'k', 'LineWidth', 1.5, 'DisplayName', '\lambda_1(Q) = 1');
-plot(t(kkp), rho2_hist(kkp),       'r', 'LineWidth', 1.5, 'DisplayName', '\rho_2 = |\lambda_2(Q)|');
-plot(t(kkp), lambda_min_Q_hist(kkp),'b', 'LineWidth', 1.5, 'DisplayName', '\lambda_{min}(Q)');
-yline(1, 'k:', 'HandleVisibility','off');
-yline(-1, 'k:', 'DisplayName', 'soglia di oscillazione');
-ylabel('\lambda_i(Q)'); ylim([-1.1, 1.1]); legend('Location','best','FontSize',7);
-title('Spettro di Q (Metropolis): equilibrio, velocita, oscillazioni');
+subplot(3,1,2);
+plot(t(kk), rho2_hist(kk), 'r', 'LineWidth', 1.5); grid on;
+ylabel('\rho_2(Q)'); ylim([-0.05, 1.05]);
+title('Essential spectral radius dei pesi di Metropolis');
 
 subplot(3,1,3); hold on; grid on;
 d_max = 0;
@@ -873,63 +815,20 @@ ylim([0, max(d_max, R_c_comm)*1.15]);
 title('Distanze inter-veicolari contro il raggio di comunicazione');
 exportgraphics(fig7, fullfile(cartella_output, '7_grafo_comunicazione.png'), 'Resolution', 300);
 
-% RIEPILOGO A CONSOLE: accuratezza della stima di posa
-% l'errore e' separato fra copertura GPS e zona cieca: e' il confronto che
-% dimostra se il ranging UWB e la localizzazione collaborativa reggono.
-fprintf('\n--- ACCURATEZZA DELLA STIMA DI POSA ---\n');
-fprintf('Durata missione           : %.1f s (%d campioni)\n', t(N_end), N_end);
-cop_tutti = true(1, N_end); cop_nessuno = true(1, N_end);
-for i = 1:N_veh
-    cop_tutti   = cop_tutti   & ~fleet(i).in_denied_hist(1:N_end);
-    cop_nessuno = cop_nessuno &  fleet(i).in_denied_hist(1:N_end);
-end
-fprintf('Copertura GPS: tutti %.1f%%, mista %.1f%%, nessuno %.1f%%\n', ...
-        100*mean(cop_tutti), 100*mean(~cop_tutti & ~cop_nessuno), 100*mean(cop_nessuno));
-fprintf('   veicolo    MAE con GPS   MAE in zona cieca   tr(Sigma) con GPS / cieca\n');
-ruoli    = repmat({'(Slave) '}, 1, N_veh);
-ruoli{1} = '(Master)';
-for i = 1:N_veh
-    e_pos = vecnorm(fleet(i).x_true(1:2,1:N_end) - fleet(i).x_est(1:2,1:N_end));
-    tr_i  = squeeze(fleet(i).Sigma_hist(1,1,1:N_end) + fleet(i).Sigma_hist(2,2,1:N_end))';
-    cieco = fleet(i).in_denied_hist(1:N_end);
-    fprintf('   V%d %s %11.3f m %13.3f m %14.4f / %.4f m^2\n', i, ...
-            ruoli{i}, ...
-            mean(e_pos(~cieco)), mean(e_pos(cieco)), ...
-            mean(tr_i(~cieco)), mean(tr_i(cieco)));
-end
-
 % RIEPILOGO A CONSOLE: grafo di comunicazione
 fprintf('\n--- GRAFO DI COMUNICAZIONE ---\n');
 fprintf('Raggio di comunicazione   : %.0f m\n', R_c_comm);
-fprintf('SPETTRO DI Q (Metropolis, tempo discreto, D-WLS)\n');
-fprintf('   lambda_i(Q)     = [%s]  (per modulo decrescente)\n', ...
-        sprintf('%+.4f ', mean(lambda_Q_hist(:,kk),2)));
-fprintf('   lambda_1(Q)     = %.4f    equilibrio: garantito sempre, Q e stocastica\n', ...
-        mean(lambda_Q_hist(1,kk)));
-fprintf('   mol_lambda_1(Q) = %d         componenti connesse (1 = rete unica)\n', ...
-        round(mean(mol_lambda1_Q_hist(kk))));
-fprintf('   rho_2           = %.4f    velocita: |lambda_2(Q)|, errore ~ rho_2^q\n', ...
-        mean(rho2_hist(kk)));
-fprintf('   lambda_min(Q)   = %+.4f   oscillazioni: lontano da -1 perche diag(Q) > 0\n', ...
-        mean(lambda_min_Q_hist(kk)));
-fprintf('SPETTRO DI L (Laplaciano, tempo continuo, formazione)\n');
-fprintf('   lambda_1(L)     = %.4f    equilibrio: garantito sempre, L*1 = 0\n', ...
-        mean(lambda1_L_hist(kk)));
-fprintf('   mol_lambda_1(L) = %d         componenti connesse\n', ...
-        round(mean(mol_lambda1_L_hist(kk))));
-fprintf('   lambda_2(L)     = %.4f    rigidita della formazione (K_%d completo darebbe %d)\n', ...
-        mean(lambda2_L_hist(kk)), N_veh, N_veh);
-fprintf('   tau = 1/(K_cons*lambda_2(L)) = %.2f s\n', 1/(K_cons*mean(lambda2_L_hist(kk))));
-fprintf('   oscillazioni: escluse in tempo continuo (lambda_i(L) reali e >= 0);\n');
-fprintf('      in tempo discreto serve K_cons*Ts*lambda_max(L) < 2, qui vale %.3f\n', ...
-        K_cons*Ts*mean(lambda_max_L_hist(kk)));
-fprintf('Grafo connesso per tutta la missione: %s\n', string(all(lambda2_L_hist(kk) > 1e-9)));
+fprintf('Connettivita algebrica    : lambda_2 = %.4f  (K_%d completo: %d)\n', ...
+        mean(lambda2_hist(kk)), N_veh, N_veh);
+fprintf('Essential spectral radius : rho_2   = %.4f\n', mean(rho2_hist(kk)));
+fprintf('Costante di tempo prevista: tau = 1/(K_cons*lambda_2) = %.2f s\n', ...
+        1/(K_cons*mean(lambda2_hist(kk))));
+fprintf('Grafo connesso per tutta la missione: %s\n', string(all(lambda2_hist(kk) > 1e-9)));
 fprintf('Margine di portata: d_max = %.1f m contro R_c = %.0f m (%.0f%% del raggio)\n', ...
         d_max, R_c_comm, 100*d_max/R_c_comm);
 
 % FIGURA 8: stima distribuita del parametro di terreno
-rr  = 1:n_round;             % statistiche su tutti i round
-rrp = rr(1:passo_plot:end);  % sottoinsieme disegnato
+rr = 1:n_round;
 if n_round > 0
     nomi_par = {'\mu_{terr} [-]', 'c_{terr} [s^2/m^2]'};
     fig8 = figure('Name','Stima distribuita del terreno (D-WLS)','Color','w', ...
@@ -946,21 +845,21 @@ if n_round > 0
         % buona quanto l'informazione raccolta consente, non quanto si vorrebbe.
         mu_c = squeeze(dwls.X(c,1,rr))';
         s3_c = 3 * dwls.dev_std(c,rr);
-        fill([dwls.t(rrp), fliplr(dwls.t(rrp))], [mu_c(1:passo_plot:end) + s3_c(1:passo_plot:end), fliplr(mu_c(1:passo_plot:end) - s3_c(1:passo_plot:end))], ...
+        fill([dwls.t(rr), fliplr(dwls.t(rr))], [mu_c + s3_c, fliplr(mu_c - s3_c)], ...
              [0.85 0.85 0.85], 'EdgeColor','none', 'DisplayName','D-WLS \pm 3\sigma');
         for i = 1:N_veh
-            plot(dwls.t(rrp), squeeze(dwls.X_loc(c,i,rrp)), [colors(i) ':'], ...
+            plot(dwls.t(rr), squeeze(dwls.X_loc(c,i,rr)), [colors(i) ':'], ...
                  'LineWidth', 1.0, 'DisplayName', sprintf('V%d solo locale', i));
         end
         % Spessore decrescente: le tre curve coincidono a meno della precisione
         % di macchina, e restano distinguibili solo cosi'.
         for i = 1:N_veh
-            plot(dwls.t(rrp), squeeze(dwls.X(c,i,rrp)), [colors(i) '-'], ...
+            plot(dwls.t(rr), squeeze(dwls.X(c,i,rr)), [colors(i) '-'], ...
                  'LineWidth', 4-i, 'DisplayName', sprintf('V%d D-WLS', i));
         end
         yline(x_terr_true(c), 'k--', 'LineWidth', 1.5, 'DisplayName', 'valore vero');
         xlabel('Tempo [s]'); ylabel(nomi_par{c});
-        title(sprintf('Stima di %s  (le curve D-WLS coincidono)', nomi_par{c}));
+        title(sprintf('Stima di %s  (le tre curve D-WLS coincidono)', nomi_par{c}));
 
         % Scala fissata sulla banda a 3 sigma, escluso il transitorio dei primi
         % round dove la covarianza schiaccerebbe il grafico. Le stime
@@ -984,10 +883,10 @@ if n_round > 0
         end
     end
     for i = 1:N_veh
-        semilogy(dwls.t(rrp), err_loc(i,rrp), [colors(i) ':'], 'LineWidth', 1.0, ...
+        semilogy(dwls.t(rr), err_loc(i,rr), [colors(i) ':'], 'LineWidth', 1.0, ...
                  'DisplayName', sprintf('V%d solo locale', i));
     end
-    semilogy(dwls.t(rrp), err_dwls(rrp), 'k-', 'LineWidth', 2, 'DisplayName', 'D-WLS');
+    semilogy(dwls.t(rr), err_dwls(rr), 'k-', 'LineWidth', 2, 'DisplayName', 'D-WLS');
     set(gca, 'YScale', 'log');
     xlabel('Tempo [s]'); ylabel('||x - x_{vero}|| / ||x_{vero}||');
     title('Errore relativo di stima'); legend('Location','best','FontSize',7);
@@ -1000,10 +899,10 @@ if n_round > 0
     % sotto a tutte le altre.
     subplot(2,2,4); hold on; grid on;
     for i = 1:N_veh
-        semilogy(dwls.t(rrp), squeeze(dwls.dev_loc(2,i,rrp)), [colors(i) ':'], ...
+        semilogy(dwls.t(rr), squeeze(dwls.dev_loc(2,i,rr)), [colors(i) ':'], ...
                  'LineWidth', 1.0, 'DisplayName', sprintf('V%d da solo', i));
     end
-    semilogy(dwls.t(rrp), dwls.dev_std(2,rrp), 'k-', 'LineWidth', 2, ...
+    semilogy(dwls.t(rr), dwls.dev_std(2,rr), 'k-', 'LineWidth', 2, ...
              'DisplayName', 'in rete (D-WLS)');
     set(gca, 'YScale', 'log');
     xlabel('Tempo [s]'); ylabel('\sigma(c_{terr}) [s^2/m^2]');
@@ -1025,13 +924,9 @@ if n_round > 0
     fprintf('Parametro vero            : mu_terr = %.5f   c_terr = %.6f\n', x_terr_true);
     fprintf('Stima finale D-WLS (V1)   : mu_terr = %.5f   c_terr = %.6f\n', dwls.X(:,1,n_round));
     fprintf('WLS centralizzato         : mu_terr = %.5f   c_terr = %.6f\n', dwls.x_centr(:,n_round));
-    % Il disaccordo residuo fra i veicoli va confrontato con la tolleranza
-    % richiesta, non con la precisione di macchina: con q troncato il consenso
-    % e' convergente ma non esatto, ed e' la condizione normale su grafo non
-    % completo.
-    disaccordo = max(max(abs(dwls.X(:,:,n_round) - dwls.X(:,1,n_round))));
-    fprintf('Accordo fra i veicoli     : disaccordo max = %.2e  (entro tolleranza: %s)\n', ...
-            disaccordo, string(disaccordo < toll_dwls));
+    fprintf('Accordo fra i veicoli     : scarto max = %.2e  (consenso esatto: %s)\n', ...
+            max(max(abs(dwls.X(:,:,n_round) - dwls.X(:,1,n_round)))), ...
+            string(max(max(abs(dwls.X(:,:,n_round) - dwls.X(:,1,n_round)))) < 1e-12));
     fprintf('D-WLS contro centralizzato: %.2e  (max su tutti i round)\n', max(dwls.scarto(rr)));
     fprintf('Invariante della somma    : %.2e  (max su tutti i round)\n', max(dwls.inv_somma(rr)));
     fprintf('Condizionamento (ultimo)  : locale = [%s]  di rete = %.2e\n', ...

@@ -76,7 +76,7 @@ Il secondo termine è di natura diversa dal primo e non va trascurato: sotto il 
 
 Il valore va infine confrontato con quanto il canale radio sostiene in un passo di campionamento. Se il budget non basta il fatto va **dichiarato**: è la differenza fra un algoritmo che ammette di non essere arrivato a convergenza e uno che restituisce in silenzio un numero sbagliato.
 
-Il dimensionamento è un calcolo del **progettista**, non dell'agente: $\rho_2$ e il diametro sono proprietà globali del grafo, esattamente come $\lambda_2$ e $L$ (vedi [TEORIA_consenso_su_grafi.md](TEORIA_consenso_su_grafi.md) §4). A bordo il numero di cicli è un parametro di configurazione, non una decisione presa in tempo reale.
+Il dimensionamento è un calcolo del **progettista**, non dell'agente: $\rho_2$ e il diametro sono proprietà globali del grafo, esattamente come $\lambda_2(L)$ (vedi [TEORIA_consenso_su_grafi.md](TEORIA_consenso_su_grafi.md) §4). A bordo il numero di cicli è un parametro di configurazione, non una decisione presa in tempo reale.
 
 Su grafo completo $\rho_2 = 0$ e il diametro vale 1: la formula restituisce $q = 1$ per qualunque tolleranza. Non è una scorciatoia scritta a mano, è il valore che il dimensionamento produce da solo.
 
@@ -148,38 +148,56 @@ $$F_i = C_i^T R_i^{-1} C_i = \frac{1}{R_i}\begin{bmatrix} 1 & v_i^2 \\ v_i^2 & v
 
 ## 10. Risultati Numerici
 
-Validazione algoritmica (`common/verifica_dwls.m`) e in simulazione (`fase_3/main3.m`, un round di stima per passo, 6926 round su 692 s di missione):
+Due configurazioni, identiche in tutto tranne che nella **topologia della rete**. È il confronto che mostra la teoria in funzione: cambiando solo il raggio radio e il numero di mezzi, tutte le grandezze spettrali cambiano di conseguenza e l'algoritmo si adatta da sé.
 
-| Proprietà verificata | Risultato |
-|---|---|
-| Rango di $F_i(0)$ da una singola misura | 1 su 2 — il nodo isolato non può risolvere |
-| Autovalore $\lambda_1 = 1$  | $\lambda_1 = 1$ garantisce lo STATO di EQUILIBRIO, quindi il grafo, dopo q-cicli di iterazioni, raggiungierà certamente uno stato di consenso. |
-| Autovalore $\lambda_2 = 0$  | $\lambda_2 $ dà informazioni sulla velocità della rete e sulla presenza di bottleneck. $\lambda_2 = 0 $ significa che il grafo è All-to-All, con velocità massima: il consenso lo raggiunge in un ciclo solo (q=1). |
-| D-WLS contro WLS centralizzato | scarto $1.5\cdot10^{-15} $(quindi le due soluzioni coincidino) |
+| | Fase 3 | Fase 4 |
+|---|---|---|
+| Veicoli, raggio radio | 3, 120 m | 5, 55 m |
+| Archi attivi | 3 su 3 — **completo** | 5 su 10 |
+| $\lambda_2(L)$ — connettività algebrica | 3.000 | 0.697 |
+| $\mathrm{mol}_{\lambda_1}(Q)$ — componenti connesse | 1 | 1 |
+| $\rho_2 = \lvert\lambda_2(Q)\rvert$ — velocità | 0.000 | 0.826 |
+| $\lambda_{min}(Q)$ — oscillazioni (mai $-1$) | 0.000 | $-0.076$ |
+| Diametro del grafo | 1 | 3 |
+| Cicli $q$ richiesti | **1** | **49** |
+| Scarto dal WLS centralizzato | $1.5\cdot10^{-15}$ | $5.2\cdot10^{-7}$ |
+| Disaccordo fra i nodi | $8.4\cdot10^{-16}$ | $9.2\cdot10^{-9}$ |
+| Invarianza di $\sum_i F_i$ | $2.8\cdot10^{-16}$ | $1.0\cdot10^{-15}$ |
 
+**Due spettri distinti, da non confondere.** Nel progetto convivono due matrici e due famiglie di autovalori, ed è un errore ricorrente scambiarle:
 
-**Il grafo completo rende il consenso esatto in un solo ciclo.** Con la formazione a V e $R_c = 120$ m la regola di Metropolis dà $Q = \frac{1}{3}\mathbf{1}\mathbf{1}^T$ e quindi $\rho_2 = 0$: il risultato spettrale ricavato al Cap. 17 si traduce qui in un costo di comunicazione di un singolo scambio per round, il 2% del budget radio disponibile. Su topologia frammentata il dimensionamento del §4.1 fa crescere $q$ da solo.
+* **$L$, il Laplaciano.** Autovalori $0 = \lambda_1(L) \le \lambda_2(L) \le \dots$ Il secondo è la **connettività algebrica**: vale zero **se e solo se il grafo è sconnesso**, e cresce con quanto la rete è ben collegata, fino a $\lambda_2(L) = n$ sul grafo completo $K_n$. Governa la dinamica del controllo di formazione, $\tau = 1/(K_{cons}\lambda_2(L))$.
+* **$Q$, la matrice di Metropolis.** È stocastica, quindi il suo autovalore massimo vale **sempre** $\lambda_1(Q) = 1$, con autovettore $\mathbf{1}$: è la garanzia che il consenso ammette uno stato di equilibrio e non diverge. Ordinando gli autovalori per modulo decrescente, il secondo è $\rho_2 = |\lambda_2(Q)|$, il **fattore di convergenza**: vale zero sul grafo completo (consenso esatto in un passo) e tende a uno quando la rete è mal collegata.
 
+I due si muovono in **verso opposto**: rete ben collegata significa $\lambda_2(L)$ grande e $\rho_2$ piccolo. Dire "$\lambda_2 = 0$ significa grafo completo" scambia i due ruoli e afferma il contrario del vero — la Fase 4 lo rende evidente, con $\lambda_2(L) = 0.697$ e $\rho_2 = 0.826$ sullo **stesso** grafo.
 
-**Guadagno della cooperazione**, misurato sull'incertezza del parametro più difficile:
+La connettività, in entrambe le letture, sta nella **molteplicità** dell'autovalore di consenso e non nel suo valore: $\mathrm{mol}_{\lambda_1}(Q) = \mathrm{mol}_{\lambda_1}(L)$ è il numero di componenti connesse. Trattazione completa in [TEORIA_consenso_su_grafi.md §5](TEORIA_consenso_su_grafi.md).
 
-| Nodo | $\sigma(c_{terr})$ da solo | in rete | guadagno |
-|---|---|---|---|
-| V1 (Master) | $5.62\cdot10^{-4}$ | $5.53\cdot10^{-4}$ | 1.0× |
-| V2 (Slave) | $4.49\cdot10^{-3}$ | $5.53\cdot10^{-4}$ | **8.1×** |
-| V3 (Slave) | $4.60\cdot10^{-3}$ | $5.53\cdot10^{-4}$ | **8.3×** |
+**Che cosa mostra la tabella.**
 
-Il Master da solo arriverebbe quasi dove arriva la rete, perché possiede sia il sensore migliore sia la maggiore escursione di velocità ($\mathrm{std}(v^2) = 0.211$ contro $0.041$ e $0.039$). Ciò che la rete produce non è un miglioramento uniforme, ma la **distribuzione a tutti della qualità del membro meglio strumentato** — la stessa struttura del GPS RTK montato sul solo Master.
+Il **rango 1 su 2** di $F_i(0)$ vale in entrambe le configurazioni: nessun mezzo, da solo e a velocità costante, può separare intercetta e pendenza.
 
-Il numero di condizionamento **non** è l'indicatore corretto di questo guadagno: aggiungere i due Slave lo peggiora leggermente, pur aggiungendo informazione. La grandezza monotona è $P$, che per l'ordinamento di Loewner non può che ridursi quando si somma un termine semidefinito positivo.
+Sul **grafo completo** la regola di Metropolis dà $Q = \frac{1}{n}\mathbf{1}\mathbf{1}^T$ e quindi $\rho_2 = 0$: un solo ciclo rende la media esatta, e lo scarto dalla soluzione centralizzata scende alla precisione di macchina. Il costo di comunicazione è di un singolo scambio.
+
+Sul **grafo sparso** servono 49 cicli su un budget radio di 50, cioè il 98% della banda allocata: la comunicazione smette di essere gratuita e diventa un vincolo di progetto. Lo scarto dal centralizzato risale a $5\cdot10^{-7}$ perché il consenso è ora troncato — convergente ma non esatto, che è la condizione normale fuori dal caso completo.
+
+**La previsione basata su $\rho_2$ è conservativa.** In Fase 4 la formula chiede 49 cicli e ne bastano 34 nei fatti, perché $\rho_2$ governa il decadimento *asintotico* e trascura la costante moltiplicativa. Sovrastimare è il verso giusto in cui sbagliare.
+
+**Guadagno della cooperazione.** Misurato sull'incertezza di $c_{terr}$, il parametro difficile: da **7× a 15×** per gli Slave in Fase 4, contro 8× in Fase 3. Per il Master il guadagno è invece unitario, perché possiede sia il sensore migliore sia la maggiore escursione di velocità. La rete non produce un miglioramento uniforme, ma **distribuisce a tutti la qualità del membro meglio strumentato** — la stessa struttura del GPS RTK montato sul solo Master. Dettaglio per veicolo in [fase_4/README4.md](../fase_4/README4.md).
+
+Validazione algoritmica su topologie note, incluso il dimensionamento automatico di $q$ e il caso di budget radio insufficiente: `common/verifica_dwls.m`.
 
 ---
 
 ## 11. Limiti Noti
 
-**Regressore incerto (*errors-in-variables*).** La riga $C_i = [1,\ v_i^2]$ è costruita sulla velocità **stimata**, l'unica disponibile a bordo. Un regressore rumoroso attenua la pendenza verso lo zero, e l'effetto è misurabile: con $v$ vera si ottiene $c_{terr} = 0.00430$, con $v$ stimata $0.00386$, contro un valore vero di $0.00500$ e $\sigma_v = 0.034$ m/s dichiarato dall'EKF. La covarianza $P$ non ne tiene conto e risulta quindi **ottimista** — lo stesso tipo di limite già documentato per la misura collaborativa, che ignora $\Sigma_j$ (README §2.3). L'effetto crescerà in Fase 5, quando lo slittamento renderà il comando diverso dalla velocità effettiva.
+**Regressore incerto (*errors-in-variables*).** La riga $C_i = [1,\ v_i^2]$ è costruita sulla velocità **stimata**, l'unica disponibile a bordo, e un regressore rumoroso attenua la pendenza verso lo zero. La covarianza dell'errore di stima non modella questo effetto e risulta quindi **ottimista** — lo stesso tipo di limite già documentato per la misura collaborativa, che ignora $\Sigma_j$ (README §2.3).
 
-**Eccitazione insufficiente.** La flotta viaggia a 0.83 m/s di media contro i 2.5 m/s di progetto, per l'errore di inseguimento a regime del consenso del primo ordine. Il termine $c_{terr}v^2$ vale quindi circa 0.004, sotto il rumore del sensore di trazione: $c_{terr}$ risulta debolmente osservabile. Lo scarto finale è di $-2.06\sigma$ su $c_{terr}$ e $+1.93\sigma$ su $\mu_{terr}$, contro $-1.24\sigma$ e $+1.14\sigma$ con regressore esatto. Il passaggio al consenso del secondo ordine, che rimuove il ritardo di formazione, agisce direttamente su questa limitazione.
+L'entità dipende però da quanto è ben condizionato il problema. Con la formazione stretta della Fase 3 l'attenuazione portava $c_{terr}$ da 0.00430 a 0.00386 contro un valore vero di 0.00500, cioè $-2.06$ deviazioni standard. Con la formazione larga della Fase 4 lo scarto scende a $-0.44$, e il riferimento a velocità esatta cade a $+0.03$: l'effetto non è sparito, è diventato piccolo rispetto all'informazione disponibile. Crescerà di nuovo in Fase 5, quando lo slittamento renderà il comando diverso dalla velocità effettiva.
+
+**Eccitazione limitata dal controllo.** La flotta viaggia molto più lenta dei 2.5 m/s di progetto — 0.83 m/s con tre mezzi, 0.50 m/s con cinque — per l'errore di inseguimento a regime del consenso del primo ordine: il Master è trattenuto dai vicini, e più vicini ha, più è trattenuto. Aggiungere veicoli **rallenta** la flotta.
+
+Ciò che conta per la stima non è però la velocità media ma la **dispersione** di $v^2$, e quella migliora: le ali esterne della V stanno a 40 m dall'asse contro i 20 m delle interne, quindi in curva la loro velocità si scosta dal Master il doppio. È il motivo per cui la Fase 4 stima meglio pur andando più piano. Il passaggio al consenso del secondo ordine, che rimuove il ritardo di formazione, agirebbe su entrambi i fronti.
 
 
 

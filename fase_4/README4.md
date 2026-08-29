@@ -50,13 +50,11 @@ Ciò crea un accoppiamento matematico fra gli agenti: se un veicolo perde tutti 
 ### 3.3 Limiti Noti dell'Implementazione Attuale
 Due limiti sono documentati esplicitamente perché condizionano l'interpretazione dei risultati e definiscono il lavoro successivo.
 
-**a) Il filtro è ottimista sulla misura collaborativa.** La matrice $R$ associata a $z_{collab}$ contiene il solo rumore del sensore, $\sigma_{collab}^2$. L'incertezza della stima del vicino — la sua matrice $\Sigma_j$ — viene ignorata, come se $\hat{p}_j$ fosse un'ancora fissa nota esattamente. Il filtro sottostima quindi la propria covarianza.
-
-Il pacchetto scambiato contiene infatti la sola posizione stimata: $\Sigma_j$ **non viene trasmessa**, perché finché non la si usa per la Covariance Intersection non porterebbe alcun beneficio e occuperebbe banda per nulla. Quando la CI verrà introdotta, la covarianza del vicino entrerà proiettata sulla direzione della congiungente:
+**a) Il filtro è ottimista sulla misura collaborativa.** La matrice $R$ associata a $z_{collab}$ contiene il solo rumore del sensore, $\sigma_{collab}^2$. L'incertezza della stima del vicino — la sua matrice $\Sigma_j$ — viene ignorata, come se $\hat{p}_j$ fosse un'ancora fissa nota esattamente. Il filtro sottostima quindi la propria covarianza. La correzione minima consiste nel proiettare la covarianza del vicino sulla direzione della congiungente:
 $$R_{eff} = \sigma_{collab}^2 + u^T \Sigma_j^{(1:2,1:2)} u, \qquad u = \frac{\hat{p}_i - \hat{p}_j}{||\hat{p}_i - \hat{p}_j||}$$
 Richiede che il vicino trasmetta, oltre alla posizione, il blocco $2 \times 2$ della propria covarianza — cioè che il **contenuto del pacchetto scambiato** passi da 2 a 5 numeri. Questo mitiga la sovra-confidenza ma **non** risolve la correlazione: poiché $i$ e $j$ si scambiano informazione ciclicamente, le stime diventano correlate in modo ignoto (*data rumination*), ed è per questo che l'architettura prevede la Covariance Intersection.
 
-> **Programmato per la Fase 5** (README principale, §4, punto 4). I due interventi — estensione del pacchetto con $\Sigma_j$ e aggiornamento in forma CI — vanno introdotti **insieme**: usare $R_{eff}$ con il guadagno di Kalman standard tratterebbe l'incertezza del vicino come rumore indipendente, mentre la propria stima contiene già informazione arrivata da lui, e sarebbe il doppio conteggio del Cap. 15 travestito da correzione. La collocazione in Fase 5 è dettata dallo slittamento, che rende l'incertezza dei vicini non solo maggiore ma **variabile nel tempo**.
+> **Programmato per la Fase 5** (README principale, §4, punto 4). Entrambi gli interventi — estensione del pacchetto con $\Sigma_j$ e aggiornamento in forma CI — sono raccolti lì, perché lo slittamento rende l'incertezza dei vicini non solo maggiore ma **variabile nel tempo**, ed è il momento in cui trattare la stima ricevuta come esatta diventa insostenibile.
 
 **b) La scala della formazione determina l'esistenza stessa dello scenario collaborativo.** Le zone GPS-denied hanno raggio 65 m. Se la formazione è larga pochi metri, i tre veicoli condividono sempre la stessa condizione di copertura e lo scenario di riferimento — "un veicolo perde il GPS ma un vicino lo mantiene e lo àncora" — non può verificarsi. Misura su run completo, prima e dopo la ritaratura della formazione:
 
@@ -106,7 +104,7 @@ L'esecuzione di `main3.m` genera la cartella `fase_3/risultati/` con otto figure
 | `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione |
 | `5_copertura_e_covarianza.png` | riferimenti assoluti disponibili e traccia di $\Sigma_{pos}$ nel tempo |
 | `6_bound_3sigma.png` | errore di stima confrontato con l'inviluppo a $\pm 3\sigma$ dichiarato dal filtro |
-| `7_grafo_comunicazione.png` | $\lambda_2(L)$, spettro $\lambda_i(Q)$ e distanze inter-veicolari contro il raggio radio |
+| `7_grafo_comunicazione.png` | $\lambda_2(L)$, $\rho_2(Q)$ e distanze inter-veicolari contro il raggio radio |
 | `8_stima_terreno_dwls.png` | stima distribuita del parametro di terreno: parametri, errore, guadagno informativo |
 
 ### 4.1 Lettura della mappa (figura 1)
@@ -139,10 +137,8 @@ La versione precedente iterava il consenso su tutti i veicoli senza controllo di
 | Grandezza | Valore misurato |
 |---|---|
 | Connettività algebrica $\lambda_2(L)$ | 3.0000 (= $K_3$ completo) |
-| Componenti connesse $\mathrm{mol}_{\lambda_1}(L) = \mathrm{mol}_{\lambda_1}(Q)$ | 1 |
-| Essential spectral radius $\rho_2 = \lvert\lambda_2(Q)\rvert$ | 0.0000 |
-| Autovalore minimo $\lambda_{min}(Q)$ | 0.0000 (lontano da $-1$: nessuna oscillazione) |
-| Costante di tempo $\tau = 1/(K_{cons}\lambda_2(L))$ | 2.22 s |
+| Essential spectral radius $\rho_2(Q)$ | 0.0000 |
+| Costante di tempo $\tau = 1/(K_{cons}\lambda_2)$ | 2.22 s |
 | Distanza inter-veicolare massima | 41.7 m, ossia il **35%** del raggio disponibile |
 | Grafo connesso per l'intera missione | sì |
 

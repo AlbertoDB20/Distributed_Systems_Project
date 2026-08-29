@@ -109,7 +109,7 @@ fprintf('--- TEST 5: grafo SCONNESSO, il fallimento e'' diagnosticabile\n');
 G_scon = costruisci_grafo([0 0; 20 0; 200 0]', 30);
 [X_s, inf_s] = consenso_dwls(F0, a0, G_scon.A, 30, 0);
 fprintf('    lambda2 = %.4f, rho2 = %.4f  (grafo connesso: %s)\n', ...
-        G_scon.lambda2, inf_s.rho2, string(G_scon.connesso));
+        G_scon.lambda2_L, inf_s.rho2, string(G_scon.connesso));
 for i = 1:n
     if any(isnan(X_s(:,i)))
         fprintf('    nodo %d: F_i singolare -> nessuna stima ricostruibile\n', i);

@@ -152,17 +152,14 @@ function [X_est, info] = consenso_dwls(F_loc, a_loc, A, q_max, toll)
     a = a_loc;
     q_misurato = NaN;                       % primo ciclo con residuo < toll
     residuo    = Inf;
+    % Il ciclo di consenso F_i <- sum_j q_ij F_j e' una contrazione sull'indice
+    % di nodo, quindi si scrive come un solo prodotto matriciale appiattendo
+    % F in (m*m) x n. Equivalente al doppio ciclo su i e j, molto piu' rapido
+    % quando q e' dell'ordine delle decine.
+    Qt = Q.';
     for it = 1:q_eff
-        F_new = zeros(m, m, n);
-        a_new = zeros(m, n);
-        for i = 1:n
-            for j = 1:n
-                if Q(i,j) ~= 0
-                    F_new(:,:,i) = F_new(:,:,i) + Q(i,j) * F(:,:,j);
-                    a_new(:,i)   = a_new(:,i)   + Q(i,j) * a(:,j);
-                end
-            end
-        end
+        F_new = reshape(reshape(F, m*m, n) * Qt, m, m, n);
+        a_new = a * Qt;
         % Residuo di consenso: quanto i nodi sono ancora in disaccordo fra
         % loro, misurato sullo stato di informazione. E' la grandezza che
         % decade come rho2^q e si annulla quando tutti raggiungono la media.

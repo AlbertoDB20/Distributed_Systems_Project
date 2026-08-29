@@ -19,7 +19,7 @@ L'esecuzione di `main2.m` genera in questa cartella:
 | `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert = \sqrt{e_X^2+e_Y^2}$, un pannello per veicolo |
 | `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ — griglia $3\times3$, una colonna per veicolo |
 | `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione nel tempo |
-| `5_grafo_comunicazione.png` | connettività algebrica, essential spectral radius e archi attivi |
+| `5_grafo_comunicazione.png` | $\lambda_2(L)$, spettro $\lambda_i(Q)$ e archi attivi |
 
 La figura 2 sostituisce il precedente grafico dei soli errori su $X$: la norma sul piano è la grandezza fisicamente significativa, mentre le componenti separate restano disponibili nella figura 3 per la diagnostica.
 
@@ -101,10 +101,10 @@ La legge di formazione è ora pesata dalla matrice di adiacenza e coincide con i
 | Grandezza | Valore | Interpretazione |
 |---|---|---|
 | $\lambda_2(L)$ | 3.0000 | coincide con il valore analitico per $K_n$ con $n=3$; il grafo è connesso |
-| $\rho_2(Q)$ | 0.0000 | con grafo completo i pesi di Metropolis danno $Q = \frac{1}{3}\mathbf{1}\mathbf{1}^T$: media esatta in **un passo** |
+| $\rho_2 = \lvert\lambda_2(Q)\rvert$ | 0.0000 | con grafo completo i pesi di Metropolis danno $Q = \frac{1}{3}\mathbf{1}\mathbf{1}^T$: media esatta in **un passo** |
 | archi attivi | 3 | $n(n-1)/2$, grafo completo |
 
-La costante di tempo prevista dalla teoria, $\tau = 1/(K_c\lambda_2) = 1/(0.15\cdot3) = 2.22$ s, è coerente con il transitorio osservato: la formazione rientra entro 1 m dalle distanze nominali a $t = 13.2$ s, circa sei costanti di tempo, come atteso per un decadimento esponenziale a partire da errori iniziali di decine di metri.
+La costante di tempo prevista dalla teoria, $\tau = 1/(K_c\lambda_2(L)) = 1/(0.15\cdot3) = 2.22$ s, è coerente con il transitorio osservato: la formazione rientra entro 1 m dalle distanze nominali a $t = 13.2$ s, circa sei costanti di tempo, come atteso per un decadimento esponenziale a partire da errori iniziali di decine di metri.
 
 I tre grafici sono costanti perché in questa fase il canale è ideale ($R_c = \infty$) e la topologia non cambia mai.
 

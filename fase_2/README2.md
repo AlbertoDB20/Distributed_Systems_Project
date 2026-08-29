@@ -44,9 +44,9 @@ Dove:
 
 $$u = -K_c\,(L \otimes I_2)\,\tilde p$$
 
-con $L = D - A$ il Laplaciano. La dinamica dell'errore è quindi $\dot e = -K_c L e$, che decade come $e^{-K_c\lambda_2 t}$: la costante di tempo vale $\tau = 1/(K_c\lambda_2)$. Per il grafo completo $K_3$ si ha $\lambda_2 = 3$, da cui $\tau = 1/(3 \cdot 0.15) = 2.22$ s — valore verificato in simulazione.
+con $L = D - A$ il Laplaciano. La dinamica dell'errore è quindi $\dot e = -K_c L e$, che decade come $e^{-K_c\lambda_2(L) t}$: la costante di tempo vale $\tau = 1/(K_c\lambda_2(L))$. Per il grafo completo $K_3$ si ha $\lambda_2(L) = 3$, da cui $\tau = 1/(3 \cdot 0.15) = 2.22$ s — valore verificato in simulazione.
 
-Il codice registra inoltre a ogni passo la connettività algebrica $\lambda_2(L)$, l'essential spectral radius $\rho_2(Q)$ dei pesi di Metropolis-Hastings e il numero di archi attivi, riportati nella figura `5_grafo_comunicazione.png`.
+Il codice registra a ogni passo la connettività algebrica $\lambda_2(L)$, l'intero spettro $\lambda_i(Q)$ dei pesi di Metropolis-Hastings — ordinati per modulo, da cui $\rho_2 = \lvert\lambda_2(Q)\rvert$ e la molteplicità $\mathrm{mol}_{\lambda_1}(Q)$ — e il numero di archi attivi, riportati nella figura `5_grafo_comunicazione.png`. La convenzione sui simboli è in [TEORIA_consenso_su_grafi.md §5](../theory/TEORIA_consenso_su_grafi.md).
 
 > Trattazione completa del consenso lineare su grafi: [TEORIA_consenso_su_grafi.md](../theory/TEORIA_consenso_su_grafi.md).
 
@@ -76,7 +76,7 @@ L'esecuzione di `main2.m` genera la cartella `fase_2/risultati/`:
 | `2_errore_posizione_2d.png` | errore di posizione scalare $\lVert e_{pos}\rVert$, un pannello per veicolo |
 | `3_diagnostica_ekf.png` | errori separati su $X$, $Y$, $\theta$ |
 | `4_forze_virtuali.png` | magnitudo dei termini di consenso e di repulsione |
-| `5_grafo_comunicazione.png` | $\lambda_2(L)$, $\rho_2(Q)$ e numero di archi attivi nel tempo |
+| `5_grafo_comunicazione.png` | $\lambda_2(L)$, spettro $\lambda_i(Q)$ e numero di archi attivi nel tempo |
 
 Il commento quantitativo alle figure è in [risultati/GRAPH_DISCUSSION.md](risultati/GRAPH_DISCUSSION.md).
 

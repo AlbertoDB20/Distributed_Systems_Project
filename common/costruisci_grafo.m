@@ -12,10 +12,25 @@ function G = costruisci_grafo(p, R_c)
 %               e' bidirezionale, se i sente j allora j sente i.
 %     G.D       matrice di GRADO, diag(d_i) con d_i = sum_j A(i,j).
 %     G.L       matrice LAPLACIANA, L = D - A.
-%     G.lambda  autovalori di L, ordinati in modo crescente.
-%     G.lambda2 CONNETTIVITA' ALGEBRICA (secondo autovalore piu' piccolo).
-%     G.connesso true se il grafo e' connesso.
-%     G.n_archi  numero di archi non orientati attivi.
+%     G.lambda_L        autovalori di L, ordinati in modo CRESCENTE.
+%     G.lambda1_L       il primo, sempre nullo: L*1 = 0.
+%     G.lambda2_L       CONNETTIVITA' ALGEBRICA, secondo autovalore.
+%     G.mol_lambda1_L   molteplicita' di lambda_1(L) = numero di componenti
+%                       connesse. Vale 1 se e solo se il grafo e' connesso.
+%     G.connesso        true se G.mol_lambda1_L == 1, cioe' se lambda_2(L) > 0.
+%     G.n_archi         numero di archi non orientati attivi.
+%
+%   CONVENZIONE SUGLI AUTOVALORI
+%   Il progetto calcola due matrici sullo stesso grafo e ne legge gli spettri
+%   separatamente, quindi ogni autovalore porta sempre l'indicazione della
+%   matrice da cui proviene:
+%     lambda_i(L)       autovalori del Laplaciano, crescenti, tutti >= 0.
+%                       Governano la dinamica del CONTROLLO DI FORMAZIONE
+%                       (tempo continuo), con tau = 1/(K_cons*lambda_2(L)).
+%     lambda_i(Q)       autovalori dei pesi di Metropolis, decrescenti, in
+%                       (-1, 1]. Governano il D-WLS (tempo discreto).
+%   Le due letture si muovono in verso opposto: rete ben collegata significa
+%   lambda_2(L) grande e rho_2 piccolo. Vedi theory/TEORIA_consenso_su_grafi.md.
 
     n = size(p, 2);
 
@@ -32,16 +47,21 @@ function G = costruisci_grafo(p, R_c)
     D = diag(sum(A, 2));    % grado in ingresso di ciascun nodo
     L = D - A;              % Laplaciano
 
-    % Autovalori ordinati. Per grafo non orientato L e' simmetrica e
-    % semidefinita positiva, quindi gli autovalori sono reali e non negativi;
-    % la parte reale rende comunque robusto il calcolo a errori numerici.
-    lambda = sort(real(eig(L)));
+    % Per grafo non orientato L e' simmetrica e semidefinita positiva, quindi
+    % gli autovalori sono reali e non negativi. La parte reale rende comunque
+    % robusto il calcolo agli errori di arrotondamento.
+    lambda_L = sort(real(eig(L)));
+    % L e' semidefinita positiva per costruzione: eventuali valori negativi
+    % sono solo arrotondamento, e si azzerano per non stampare "-0.0000".
+    lambda_L(abs(lambda_L) < 1e-12) = 0;
 
-    G.A        = A;
-    G.D        = D;
-    G.L        = L;
-    G.lambda   = lambda;
-    G.lambda2  = lambda(min(2, n));
-    G.connesso = G.lambda2 > 1e-9;
-    G.n_archi  = nnz(A) / 2;
+    G.A              = A;
+    G.D              = D;
+    G.L              = L;
+    G.lambda_L       = lambda_L;
+    G.lambda1_L      = lambda_L(1);
+    G.lambda2_L      = lambda_L(min(2, n));
+    G.mol_lambda1_L  = sum(abs(lambda_L) < 1e-9);
+    G.connesso       = G.mol_lambda1_L == 1;
+    G.n_archi        = nnz(A) / 2;
 end

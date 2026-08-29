@@ -301,8 +301,20 @@ for i = 1:N_veh
 end
 
 % Diagnostica del grafo di comunicazione, registrata a ogni passo
-lambda2_hist = zeros(1, N_steps);   % connettivita' algebrica
-rho2_hist    = zeros(1, N_steps);   % essential spectral radius dei pesi Metropolis
+% SPETTRI DEL GRAFO: DUE MATRICI, DUE LETTURE
+% L = D - A pesa gli archi con l'adiacenza ed e' l'oggetto del controllo di
+% formazione (tempo continuo); Q li pesa con Metropolis ed e' l'oggetto della
+% stima distribuita (tempo discreto). Gli autovalori di Q sono ordinati per
+% MODULO decrescente, quindi rho_2 = |lambda_2(Q)| e il test sulle oscillazioni
+% va fatto su lambda_min(Q). Vedi theory/TEORIA_consenso_su_grafi.md §5.
+lambda1_L_hist     = zeros(1, N_steps);      % lambda_1(L), sempre nullo
+lambda2_L_hist     = zeros(1, N_steps);      % lambda_2(L), connettivita' algebrica
+lambda_max_L_hist  = zeros(1, N_steps);      % lambda_max(L), margine di discretizzazione
+mol_lambda1_L_hist = zeros(1, N_steps);      % mol_lambda_1(L) = componenti connesse
+lambda_Q_hist      = zeros(N_veh, N_steps);  % spettro di Q, per modulo decrescente
+lambda_min_Q_hist  = zeros(1, N_steps);      % autovalore piu' negativo di Q
+mol_lambda1_Q_hist = zeros(1, N_steps);      % mol_lambda_1(Q) = componenti connesse
+rho2_hist          = zeros(1, N_steps);      % rho_2 = |lambda_2(Q)|
 n_archi_hist = zeros(1, N_steps);   % numero di archi attivi
 
 for k = 1:N_steps-1
@@ -327,16 +339,20 @@ for k = 1:N_steps-1
     % Va ricostruito a ogni passo perche' in generale la topologia dipende
     % dalle posizioni, e in Fase 4/6 dipendera' anche da latenze e perdite.
     G = costruisci_grafo(p_est, R_c_comm);
-    % NOTA: di pesi_metropolis si usa qui il solo rho2, come indicatore di
-    % velocita' di convergenza. La matrice Q NON entra nella legge di
-    % controllo: quella e' in forma laplaciana e usa l'adiacenza G.A.
-    % Q servira' agli algoritmi di stima distribuita del Cap. 18, che
-    % sono invece algoritmi di sostituzione e richiedono doppia
-    % stocasticita'. Vedi theory/TEORIA_consenso_su_grafi.md §4.2 e §5.1.
-    [~, rho2] = pesi_metropolis(G.A);
-    lambda2_hist(k) = G.lambda2;
-    rho2_hist(k)    = rho2;
-    n_archi_hist(k) = G.n_archi;
+    % Lo spettro di Q e' qui solo diagnostico: la legge di controllo e' in
+    % forma laplaciana e usa l'adiacenza G.A. Q entra in funzione dalla Fase 3,
+    % nel D-WLS, che e' un algoritmo di sostituzione e richiede la doppia
+    % stocasticita'. Vedi theory/TEORIA_consenso_su_grafi.md §4 e §5.
+    [~, rho2, lambda_Q, mol_lambda1_Q, lambda_min_Q] = pesi_metropolis(G.A);
+    lambda1_L_hist(k)     = G.lambda1_L;
+    lambda2_L_hist(k)     = G.lambda2_L;
+    lambda_max_L_hist(k)  = G.lambda_L(end);
+    mol_lambda1_L_hist(k) = G.mol_lambda1_L;
+    lambda_Q_hist(:,k)    = lambda_Q;
+    lambda_min_Q_hist(k)  = lambda_min_Q;
+    mol_lambda1_Q_hist(k) = mol_lambda1_Q;
+    rho2_hist(k)          = rho2;
+    n_archi_hist(k)       = G.n_archi;
     for i = 1:N_veh
         fleet(i).grado_hist(k) = G.D(i,i);
     end
@@ -573,15 +589,27 @@ fig5 = figure('Name','Grafo di Comunicazione: connettivita'' e convergenza','Col
               'Position', [200, 200, 1000, 600]);
 
 subplot(3,1,1);
-plot(t(kk), lambda2_hist(kk), 'b', 'LineWidth', 1.5); grid on; hold on;
-yline(N_veh, 'k--', 'LineWidth', 1, 'Label', sprintf('K_%d completo: \lambda_2 = %d', N_veh, N_veh));
+plot(t(kk), lambda2_L_hist(kk), 'b', 'LineWidth', 1.5); grid on; hold on;
+yline(N_veh, 'k--', 'LineWidth', 1, 'Label', sprintf('K_%d completo', N_veh));
 ylabel('\lambda_2(L)'); ylim([0, N_veh*1.3]);
-title('Connettivita'' algebrica: \lambda_2 > 0 garantisce la convergenza del consenso');
+title('Connettivita algebrica \lambda_2(L): > 0 garantisce la convergenza del consenso');
 
-subplot(3,1,2);
-plot(t(kk), rho2_hist(kk), 'r', 'LineWidth', 1.5); grid on;
+% Spettro di Q con le tre letture: lambda_1(Q) = 1 (equilibrio garantito),
+% rho_2 = |lambda_2(Q)| (velocita'), lambda_min(Q) (oscillazioni, escluse da
+% Metropolis perche' la diagonale e' strettamente positiva).
+subplot(3,1,2); hold on; grid on;
+for r_idx = 1:N_veh
+    plot(t(kk), lambda_Q_hist(r_idx,kk), 'Color', [0.6 0.6 0.6], 'LineWidth', 0.8, ...
+         'HandleVisibility', 'off');
+end
+plot(t(kk), lambda_Q_hist(1,kk),  'k', 'LineWidth', 1.5, 'DisplayName', '\lambda_1(Q) = 1');
+plot(t(kk), rho2_hist(kk),        'r', 'LineWidth', 1.5, 'DisplayName', '\rho_2 = |\lambda_2(Q)|');
+plot(t(kk), lambda_min_Q_hist(kk),'b', 'LineWidth', 1.5, 'DisplayName', '\lambda_{min}(Q)');
+yline(1, 'k:', 'HandleVisibility','off');
+yline(-1, 'k:', 'DisplayName', 'soglia di oscillazione');
+ylabel('\lambda_i(Q)'); ylim([-1.1, 1.1]); legend('Location','best','FontSize',7);
 ylabel('\rho_2(Q)'); ylim([-0.05, 1.05]);
-title('Essential spectral radius dei pesi di Metropolis (\rho_2 = 0: media esatta in un passo)');
+title('Spettro di Q (Metropolis): \rho_2 = 0 significa media esatta in un passo');
 
 subplot(3,1,3);
 plot(t(kk), n_archi_hist(kk), 'k', 'LineWidth', 1.5); grid on;
@@ -590,15 +618,32 @@ xlabel('Tempo [s]'); ylabel('N. archi');
 title('Archi attivi nel grafo di comunicazione');
 exportgraphics(fig5, fullfile(cartella_output, '5_grafo_comunicazione.png'), 'Resolution', 300);
 
-% --- Riepilogo a console delle grandezze di Cap. 17 ---
-fprintf('\n--- GRAFO DI COMUNICAZIONE (Cap. 17) ---\n');
+% RIEPILOGO A CONSOLE: grafo di comunicazione
+fprintf('\n--- GRAFO DI COMUNICAZIONE ---\n');
 fprintf('Raggio di comunicazione   : %s\n', string(R_c_comm));
-fprintf('Connettivita'' algebrica    : lambda_2 = %.4f  (K_%d completo: %d)\n', ...
-        mean(lambda2_hist(kk)), N_veh, N_veh);
-fprintf('Essential spectral radius : rho_2   = %.4f\n', mean(rho2_hist(kk)));
-fprintf('Costante di tempo prevista: tau = 1/(K_cons*lambda_2) = %.2f s\n', ...
-        1/(K_cons*mean(lambda2_hist(kk))));
-fprintf('Grafo connesso per tutta la missione: %s\n', string(all(lambda2_hist(kk) > 1e-9)));
+fprintf('SPETTRO DI Q (Metropolis, tempo discreto)\n');
+fprintf('   lambda_i(Q)     = [%s]  (per modulo decrescente)\n', ...
+        sprintf('%+.4f ', mean(lambda_Q_hist(:,kk),2)));
+fprintf('   lambda_1(Q)     = %.4f    equilibrio: garantito sempre, Q e stocastica\n', ...
+        mean(lambda_Q_hist(1,kk)));
+fprintf('   mol_lambda_1(Q) = %d         componenti connesse (1 = rete unica)\n', ...
+        round(mean(mol_lambda1_Q_hist(kk))));
+fprintf('   rho_2           = %.4f    velocita: |lambda_2(Q)|, errore ~ rho_2^q\n', ...
+        mean(rho2_hist(kk)));
+fprintf('   lambda_min(Q)   = %+.4f   oscillazioni: lontano da -1 perche diag(Q) > 0\n', ...
+        mean(lambda_min_Q_hist(kk)));
+fprintf('SPETTRO DI L (Laplaciano, tempo continuo, formazione)\n');
+fprintf('   lambda_1(L)     = %.4f    equilibrio: garantito sempre, L*1 = 0\n', ...
+        mean(lambda1_L_hist(kk)));
+fprintf('   mol_lambda_1(L) = %d         componenti connesse\n', ...
+        round(mean(mol_lambda1_L_hist(kk))));
+fprintf('   lambda_2(L)     = %.4f    rigidita della formazione (K_%d completo darebbe %d)\n', ...
+        mean(lambda2_L_hist(kk)), N_veh, N_veh);
+fprintf('   tau = 1/(K_cons*lambda_2(L)) = %.2f s\n', 1/(K_cons*mean(lambda2_L_hist(kk))));
+fprintf('   oscillazioni: escluse in tempo continuo (lambda_i(L) reali e >= 0);\n');
+fprintf('      in tempo discreto serve K_cons*Ts*lambda_max(L) < 2, qui vale %.3f\n', ...
+        K_cons*Ts*mean(lambda_max_L_hist(kk)));
+fprintf('Grafo connesso per tutta la missione: %s\n', string(all(lambda2_L_hist(kk) > 1e-9)));
 
 end  % if ~MODO_BATCH  (fine blocco grafici)
 
