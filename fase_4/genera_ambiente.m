@@ -176,12 +176,12 @@ xlabel('X [m]'); ylabel('Y [m]');
 [~, obj_h] = legend('Location', 'best');
 
 %% 7. SALVATAGGIO DATI
-% Il file viene sempre scritto ACCANTO A QUESTO SCRIPT, cioe' in fase_3/,
-% che e' dove main3.m lo cerca. Il percorso e' ancorato alla posizione del
+% Il file viene sempre scritto ACCANTO A QUESTO SCRIPT, cioe' in fase_4/,
+% che e' dove main4.m lo cerca. Il percorso e' ancorato alla posizione del
 % file e non alla directory corrente: senza questo accorgimento, lanciando lo
 % script dalla radice o dall'IDE si otterrebbero due copie dell'ambiente in
 % cartelle diverse, destinate a divergere in silenzio.
-file_out = fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase3.mat');
+file_out = fullfile(fileparts(mfilename('fullpath')), 'ambiente_fase4.mat');
 save(file_out, 'W_MAP', 'H_MAP', 'gps_denied_zones', 'tipo_percorso', ...
      'path_points', 'uwb_opt', 'r_ancora');
 fprintf('Ambiente generato e salvato in "%s".\n', file_out);
