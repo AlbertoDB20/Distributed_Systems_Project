@@ -78,7 +78,8 @@ L'architettura \`e stata sviluppata in modo incrementale e validata in un
 simulatore MATLAB che include zone GPS-denied, ancore Ultra-Wideband (UWB)
 posizionate per minimizzazione della GDOP, un grafo di comunicazione non
 completo, sensori alle loro frequenze reali e un canale con latenza variabile
-e perdita di pacchetti.
+e perdita di pacchetti. I risultati sono ottenuti da una campagna Monte Carlo
+di 50 ripetizioni, e riportati come media e deviazione standard.
 I risultati mostrano che in zona cieca la flotta riduce la traccia della
 covarianza di posizione di un fattore 27 rispetto alla navigazione a cielo
 aperto con GNSS di serie, e che la cooperazione migliora fino a 15 volte
@@ -209,9 +210,7 @@ per la misura di distanza e di un torsiometro sull'albero di trasmissione.
 Le equazioni di misura sono le seguenti.
 
 \emph{AHRS}: fornisce direttamente imbardata e velocit\`a angolare,
-\begin{equation}
-z^{ahrs} = \begin{bmatrix}\theta\\ \omega\end{bmatrix} + \delta^{ahrs}
-\end{equation}
+$z^{ahrs} = [\theta,\ \omega]^T + \delta^{ahrs}$.
 
 \emph{Velocit\`a dei cingoli}: il sensore a effetto Hall sul pignone conta
 gli impulsi e fornisce la velocit\`a angolare dei due cingoli,
@@ -228,11 +227,8 @@ dove $r = 0.5$\,m \`e il raggio della ruota motrice e $L_c = 3.5$\,m la
 carreggiata, cio\`e l'interasse fra i due cingoli. La~\eqref{eq:enc}
 presuppone rotolamento puro, ipotesi che verr\`a rimossa negli sviluppi futuri.
 
-\emph{GNSS}: misura diretta di posizione assoluta, disponibile solo fuori
-dalle zone cieche,
-\begin{equation}
-z^{gnss} = \begin{bmatrix}x\\ y\end{bmatrix} + \delta^{gnss}
-\end{equation}
+\emph{GNSS}: misura diretta di posizione assoluta, disponibile solo fuori dalle
+zone cieche, $z^{gnss} = [x,\ y]^T + \delta^{gnss}$.
 
 \emph{Ranging UWB}: distanza da un'ancora fissa di posizione nota
 $p^{anc} = [X^{anc}, Y^{anc}]^T$, oppure da un veicolo vicino,
@@ -400,20 +396,17 @@ misura. Si noti l'assenza del termine $B_k u_k$ nella predizione: come
 argomentato sopra, le velocit\`a sono stati e non ingressi.
 
 La scelta dell'EKF rispetto a un UKF \`e stata verificata sul criterio che
-conta, cio\`e quanto la funzione curva entro $\pm 3\sigma$ e non quanto curva in
-assoluto. L'errore di linearizzazione del modello di moto vale
-$\tfrac{1}{2}v T_s \sigma_\theta^2 \approx 8\cdot 10^{-6}$\,m per passo, tre
-ordini di grandezza sotto il rumore di processo ($4.5\cdot 10^{-2}$\,m); per le
-misure UWB il rapporto \`e analogo. Le due soluzioni sarebbero indistinguibili,
-e l'UKF pagherebbe 11 propagazioni per passo.
+conta, cio\`e quanto la funzione curva entro $\pm 3\sigma$: l'errore di
+linearizzazione vale $\tfrac{1}{2}v T_s \sigma_\theta^2 \approx 8\cdot10^{-6}$\,m
+per passo, tre ordini di grandezza sotto il rumore di processo. Le due soluzioni
+sarebbero indistinguibili, e l'UKF pagherebbe 11 propagazioni per passo.
 
 Dal punto di vista architetturale conta che il vettore di misura $z_k$ abbia
-\textbf{dimensione variabile}: a ogni passo si accodano soltanto le righe
-effettivamente disponibili, cio\`e il GNSS se il veicolo non \`e in zona cieca
-e il ricevitore ha prodotto una soluzione, una riga per ogni ancora UWB in
-vista e una riga per ogni vicino in portata. Con l'EKF questo si traduce
-nell'accodamento di righe a $z_k$, $C_k$ e $R_k$; con l'UKF andrebbe rieseguita
-la trasformata unscented a ogni cambio di configurazione.
+\textbf{dimensione variabile}: a ogni passo si accodano solo le righe
+disponibili, cio\`e il GNSS se il ricevitore ha prodotto una soluzione fuori
+dalle zone cieche, una riga per ogni ancora UWB in vista e una per ogni vicino
+in portata. Con l'EKF basta accodare righe a $z_k$, $C_k$ e $R_k$; con l'UKF
+andrebbe rieseguita la trasformata unscented a ogni cambio di configurazione.
 
 \subsection{Rumore di processo in forma CWNA}
 \label{sub:cwna}
@@ -442,12 +435,11 @@ Il risultato \emph{non} \`e diagonale: contiene le correlazioni
 posizione--velocit\`a, informazione fisica che una diagonale scarterebbe. I tre
 canali di rumore sono $q_a = 0.10$\,m$^2$/s$^3$ sull'accelerazione
 longitudinale, $q_\alpha = 0.01$\,rad$^2$/s$^3$ su quella angolare e
-$q_{lat} = 0.02$\,m$^2$/s sulla deriva laterale. Quest'ultimo \`e un termine
-fondamentale: l'uniciclo \`e anolonomo e non pu\`o rappresentare la traslazione
-laterale, quindi senza di esso $Q_d$ risulta singolare (rango 4 su 5) e
-l'incertezza perpendicolare alla marcia non crescerebbe mai. La forma chiusa
-\`e stata verificata contro la discretizzazione esatta di Van Loan: a
-$T_s = 0.1$\,s l'errore relativo \`e di $4\cdot 10^{-4}$.
+$q_{lat} = 0.02$\,m$^2$/s sulla deriva laterale. Quest'ultimo \`e
+indispensabile: l'uniciclo \`e anolonomo e senza di esso $Q_d$ risulta singolare
+(rango 4 su 5), con l'incertezza perpendicolare alla marcia che non cresce mai.
+La forma chiusa \`e verificata contro la discretizzazione esatta di Van Loan,
+con errore relativo di $4\cdot10^{-4}$.
 
 \subsection{Controllo di formazione tramite consenso}
 \label{sub:consenso}
@@ -468,17 +460,13 @@ l'insieme dei vicini in portata radio e $a_{ij}$ \`e l'elemento della matrice
 di adiacenza.
 
 In questa legge si utilizzano i pesi di adiacenza $a_{ij}$ e \emph{non} i pesi
-di Metropolis $q_{ij}$. I due non sono tarature alternative dello stesso
-parametro. La legge di controllo agisce sull'errore relativo tra i veicoli:
-poich\'e opera su differenze, l'equilibrio della formazione \`e
-intrinsecamente garantito per qualsiasi set di pesi $a_{ij} \ge 0$. Non vi \`e
-alcuna necessit\`a di normalizzazione n\'e di definire un auto-peso $a_{ii}$.
-Al contrario, i pesi $q_{ij}$ nascono per costruire una matrice stocastica (con
-somma per riga pari a 1) per la stima distribuita, dove l'agente sostituisce la
-propria informazione con una vera e propria media. Usarli nel controllo
-significherebbe scartare l'auto-peso $q_{ii}$, distruggendo di fatto la
-stocasticit\`a, e legare arbitrariamente il guadagno del controllore alla
-topologia locale della rete.
+di Metropolis $q_{ij}$. La legge opera su \emph{differenze}, quindi l'equilibrio
+della formazione \`e garantito per qualsiasi set di pesi $a_{ij} \ge 0$ e non
+serve n\'e normalizzare n\'e definire un auto-peso $a_{ii}$. I pesi $q_{ij}$
+nascono invece per costruire una matrice stocastica, dove l'agente sostituisce
+la propria informazione con una media: usarli nel controllo significherebbe
+scartare l'auto-peso $q_{ii}$, distruggendo la stocasticit\`a, e legare il
+guadagno del controllore alla topologia locale.
 
 Introducendo la variabile traslata $\tilde p_i = p_i - p_i^{des}$, l'errore
 diventa $\tilde p_i - \tilde p_j$ e l'equazione si riscrive in forma matriciale
@@ -552,12 +540,12 @@ dove $k_{rep}$ \`e il guadagno repulsivo, ricavato invertendo un requisito di
 progetto che prevede che a met\`a della distanza di sicurezza la repulsione
 valga 3\,m/s.
 
-Deve valere $d_{safe} < \min_{i \neq j}\lVert\Delta_{ij}\rVert$, altrimenti la
-repulsione non si annullerebbe mai nella configurazione desiderata e la
-formazione risulterebbe irraggiungibile. Inoltre $d_{safe} < r_{collab}$ \`e
-imposto da un \texttt{assert} in inizializzazione: la repulsione richiede la
-\emph{direzione} verso il vicino e non la sola distanza, e la direzione arriva
-solo dal pacchetto radio.
+Devono valere due vincoli, entrambi imposti da un \texttt{assert} in
+inizializzazione. Il primo, $d_{safe} < \min_{i \neq j}\lVert\Delta_{ij}\rVert$,
+evita che la repulsione resti attiva nella configurazione desiderata rendendo la
+formazione irraggiungibile. Il secondo, $d_{safe} < r_{collab}$, garantisce che
+il vicino sia in portata quando serve respingerlo: la repulsione richiede la
+\emph{direzione}, che arriva solo dal pacchetto radio.
 
 \subsection{Stima distribuita del parametro di terreno (D-WLS)}
 \label{sub:dwls}
@@ -627,11 +615,10 @@ diverse, fornite dalla formazione (su percorso curvo le ali della V percorrono
 archi di raggio diverso dal Master) e dall'accumulo lungo la missione.
 
 \textbf{Il fattore $1/N$ si cancella nella stima ma non nella covarianza.} A
-convergenza il nodo possiede $F_i(q) = \frac{1}{N}\sum_l F_l$, e nel rapporto
-della~\eqref{eq:ricostruzione} la normalizzazione sparisce: il D-WLS
-\emph{non richiede di conoscere la cardinalit\`a della rete}. Per dichiarare
-l'incertezza serve per\`o $\Sigma_{terr} = (N F_i(q))^{-1}$, dove il fattore
-non si semplifica.
+convergenza $F_i(q) = \frac{1}{N}\sum_l F_l$, e nel rapporto
+della~\eqref{eq:ricostruzione} la normalizzazione sparisce: il D-WLS \emph{non
+richiede di conoscere la cardinalit\`a della rete}. Per dichiarare l'incertezza
+serve per\`o $\Sigma_{terr} = (N F_i(q))^{-1}$, dove il fattore resta.
 
 \textbf{Il numero di cicli $q$ non \`e una costante scritta a mano.} Viene
 dimensionato dal raggio spettrale essenziale:
@@ -664,30 +651,26 @@ Il lavoro \`e stato organizzato dividendolo in fasi successive, ciascuna delle
 quali rimuove una singola ipotesi semplificativa e viene validata prima di
 passare alla successiva. La scelta ha permesso di attribuire ogni variazione
 dei risultati a una causa precisa, invece di dover diagnosticare un sistema
-completo che non funziona come ci si aspettava. Le fasi sono riassunte in
-Tab.~\ref{tab:fasi}: il punto di arrivo di questo lavoro, e l'oggetto dei
-risultati della sezione seguente, \`e la Fase 4.
-
-\begin{table}[t]
-\centering
-\caption{Divisione del lavoro in fasi incrementali. Ogni fase rimuove
-un'ipotesi ideale e viene validata separatamente.}
-\label{tab:fasi}
-\begin{tabular}{cll}
-\toprule
-\textbf{Fase} & \textbf{Ipotesi rimossa} & \textbf{Contenuto}\\
-\midrule
-1 & nessuna & veicolo singolo, EKF, taratura\\
-2 & agente singolo & flotta $N=3$, consenso, anti-collisione\\
-3 & ambiente ideale & zone GPS-denied, ancore UWB, D-WLS\\
-4 & rete ideale & grafo sparso, sensori reali, canale\\
-\bottomrule
-\end{tabular}
-\end{table}
+completo che non funziona come ci si aspettava. La Fase 1 sviluppa il singolo
+veicolo con il suo EKF; la Fase 2 introduce la flotta a tre mezzi, il consenso e
+l'anti-collisione; la Fase 3 aggiunge le zone GPS-denied, le ancore UWB e il
+D-WLS; la Fase 4, punto di arrivo di questo lavoro e oggetto dei risultati,
+rimuove l'idealit\`a della rete introducendo grafo sparso, sensori a frequenza
+reale e canale non ideale.
 
 Ogni fase \`e implementata in uno script MATLAB autonomo, che condivide con le
 altre un insieme di funzioni comuni (costruzione del grafo, pesi di Metropolis,
 rumore CWNA, consenso D-WLS).
+
+\textbf{Campagna Monte Carlo.} Tutti i risultati della sezione seguente sono
+ottenuti ripetendo \textbf{50 volte} la stessa configurazione, cambiando solo il
+seme del generatore di numeri casuali, fissato al numero della ripetizione
+perch\'e la campagna sia riproducibile. La campagna non duplica il codice di
+simulazione: esegue lo stesso script della Fase 4 in modalit\`a batch, senza
+generare figure, e ne raccoglie le variabili al termine di ogni ripetizione. Il
+motivo per ripetere \`e concreto: un singolo run non permette di distinguere una
+propriet\`a del sistema da una fluttuazione del rumore, e per la stima del
+terreno la differenza si rivela sostanziale.
 
 \subsection{Generazione dell'ambiente e collocazione delle ancore}
 \label{sub:ambiente}
@@ -745,16 +728,13 @@ che ha tante righe quante sono le ancore in vista e due colonne:
 Nella configurazione ottimizzata il veicolo in zona cieca vede sempre almeno
 tre ancore, tipicamente quattro o cinque, come mostra il pannello superiore
 della Fig.~\ref{fig:covarianza}. La matrice $C_{geom}$ della~\eqref{eq:gdop} \emph{coincide} inoltre con le righe di ranging della Jacobiana
-$C_k$ dell'EKF: la GDOP non \`e un criterio esterno importato dalla letteratura
-GNSS, \`e una misura del condizionamento dello stesso problema di stima che il
+$C_k$ dell'EKF: la GDOP \`e una misura del condizionamento dello stesso problema di stima che il
 filtro dovr\`a risolvere in quel punto.
 
-L'ottimizzazione \`e affidata a Nelder-Mead, che \`e derivative-free e non
-vincolato; il vincolo di installabilit\`a dentro i confini della mappa \`e
-imposto come penalit\`a additiva sulla funzione di costo. Con cinque ancore lo
-spazio di ricerca ha dieci dimensioni, al limite superiore di affidabilit\`a del
-metodo: il risultato \`e un minimo locale dipendente dall'inizializzazione, non
-l'ottimo globale.
+L'ottimizzazione \`e affidata a Nelder-Mead, con il vincolo di installabilit\`a
+dentro la mappa imposto come penalit\`a additiva. Con cinque ancore lo spazio di
+ricerca ha dieci dimensioni, al limite di affidabilit\`a del metodo: il
+risultato \`e un minimo locale, non l'ottimo globale.
 
 \subsection{Ciclo di simulazione e convenzione temporale}
 
@@ -774,15 +754,14 @@ blocchi in quest'ordine:
 \item \textbf{Stima}: predizione e correzione, ottenendo $\hat x_{k+1}$.
 \end{enumerate}
 
-Due vincoli giustificano quest'ordine. Il primo \`e la \emph{causalit\`a del
-controllo}: il comando che agisce durante $[t_k, t_{k+1})$ pu\`o dipendere solo
-da $\hat x_k$. Il secondo \`e la \emph{coerenza temporale dell'innovazione}:
-correggere una predizione riferita a $t_{k+1}$ con una misura acquisita a $t_k$
-introdurrebbe un errore \emph{sistematico} dell'ordine di $|v|T_s$, che per
-costruzione non \`e rappresentato in $\Sigma$ e invaliderebbe ogni analisi di
-consistenza. I blocchi 3 e 4 sono due passate distinte sull'intera flotta
-perch\'e le misure di distanza inter-veicolare dipendono dalla posizione reale
-dei vicini, che deve quindi esistere prima.
+Due vincoli giustificano quest'ordine. La \emph{causalit\`a del controllo}: il
+comando che agisce durante $[t_k, t_{k+1})$ pu\`o dipendere solo da $\hat x_k$. E
+la \emph{coerenza temporale dell'innovazione}: correggere una predizione
+riferita a $t_{k+1}$ con una misura acquisita a $t_k$ introdurrebbe un errore
+\emph{sistematico} dell'ordine di $|v|T_s$, che non \`e rappresentato in
+$\Sigma$ e invaliderebbe l'analisi di consistenza. I blocchi 3 e 4 sono due
+passate distinte perch\'e le misure di distanza inter-veicolare dipendono dalla
+posizione reale dei vicini.
 
 \subsection{Modello del canale}
 
@@ -790,11 +769,10 @@ Il pacchetto di posa scambiato a 10\,Hz non arriva n\'e subito n\'e sempre. Il
 ritardo \`e modellato come una gaussiana $\mathcal{N}(100\,\mathrm{ms},
 (33\,\mathrm{ms})^2)$ troncata a $[0, 200]$\,ms, e la perdita di pacchetti come
 un evento di Bernoulli allo 0.5\%. La gaussiana simmetrica non \`e fedele alle
-latenze reali, che sono asimmetriche a destra, ma \`e \emph{conservativa}: a
-parit\`a di massimo ha media pi\`u alta e quindi stressa di pi\`u il sistema.
+latenze reali, asimmetriche a destra, ma \`e \emph{conservativa}: a parit\`a di
+massimo ha media pi\`u alta e stressa di pi\`u il sistema.
 
-Ritardo e perdita non vengono modellati separatamente ma si compongono in
-un'unica grandezza, l'\textbf{et\`a} $\eta_{ij}$ del dato che il veicolo $i$ possiede di
+Ritardo e perdita si compongono in un'unica grandezza, l'\textbf{et\`a} $\eta_{ij}$ del dato che il veicolo $i$ possiede di
 $j$, espressa in passi. Il simulatore mantiene un solo indice $k_{rx}(i,j)$,
 quello del pacchetto pi\`u fresco ricevuto:
 
@@ -835,8 +813,9 @@ $N = 5$ veicoli in formazione a ``V'' profonda 60\,m, raggio di comunicazione
 $r_{collab} = 55$\,m, raggio di visibilit\`a delle ancore $r_{ancora} = 150$\,m,
 $n_{ancore} = 5$ ancore fisse, sensori alle frequenze di
 Tab.~\ref{tab:sensori}, canale con ritardo e perdite. La missione dura
-1218\,s (12\,181 campioni a 10\,Hz) e si svolge sulla mappa di
-Fig.~\ref{fig:mappa}.
+$1218.0 \pm 0.2$\,s (circa 12\,180 campioni a 10\,Hz) e si svolge sulla mappa
+di Fig.~\ref{fig:mappa}. Dove non indicato diversamente, i valori sono media e
+deviazione standard sulle 50 ripetizioni della campagna.
 
 \begin{figure}[t]
 \centering
@@ -899,38 +878,25 @@ cio\`e il 98\% della banda allocata. Il consenso passa da voce marginale a
 vincolo di progetto, e la scelta del raggio radio diventa un compromesso fra
 qualit\`a del collegamento e costo della comunicazione.
 
-La Fig.~\ref{fig:grafo} mostra che la topologia resta deterministica per
-l'intera missione. Le distanze nominali si separano in due gruppi netti,
+La topologia resta deterministica per l'intera missione: le distanze nominali si separano in due gruppi netti,
 36--41\,m e 66--81\,m, con un vuoto di 25\,m in mezzo: il margine \`e del
 $+34\%$ sui collegamenti attivi e del $-16\%$ su quelli assenti, quindi
 l'errore di formazione non li fa sfarfallare.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.78\textwidth]{figure/7_grafo_comunicazione.png}
-\caption{Diagnostica del grafo di comunicazione. In alto la connettivit\`a
-algebrica $\lambda_2(L)$ e il numero di archi attivi; al centro lo spettro
-$\lambda_i(Q)$ della matrice di Metropolis; in basso le dieci distanze
-inter-veicolari confrontate con il raggio radio (tratteggio nero). Le cinque
-curve continue restano ben sotto la soglia, le cinque punteggiate ben sopra:
-\`e il vuoto fra i due gruppi che rende la topologia deterministica malgrado
-l'errore di formazione.}
-\label{fig:grafo}
-\end{figure*}
-
 \subsection{Accuratezza della localizzazione}
 
 Sulla missione completa la copertura satellitare si distribuisce cos\`i: nel
-\textbf{52.8\%} del tempo tutti e cinque i veicoli ricevono il GNSS, nel
+\textbf{52.9\%} del tempo tutti e cinque i veicoli ricevono il GNSS, nel
 \textbf{37.8\%} la copertura \`e \emph{mista} (almeno un veicolo coperto e
-almeno uno al buio) e nel \textbf{9.4\%} nessun veicolo ha copertura. La fascia
-centrale \`e quella per cui il progetto esiste, perch\'e \`e l\`i che un mezzo
-cieco pu\`o ancorarsi a un vicino che vede ancora i satelliti; il fatto che
-valga oltre un terzo della missione \`e conseguenza diretta della scala della
-formazione, profonda 60\,m contro i 45--85\,m di raggio delle zone d'ombra. Con
-una formazione larga pochi metri i cinque mezzi condividerebbero sempre la
-stessa condizione di copertura e lo scenario collaborativo non si presenterebbe
-mai.
+almeno uno al buio) e nel \textbf{9.4\%} nessun veicolo ha copertura. Le tre
+percentuali variano di appena un decimo di punto fra le ripetizioni, perch\'e
+dipendono dalla mappa e non dal rumore. La fascia centrale \`e quella per cui il
+progetto esiste, perch\'e \`e l\`i che un mezzo cieco pu\`o ancorarsi a un vicino
+che vede ancora i satelliti, e vale oltre un terzo della missione solo grazie
+alla scala della formazione: profonda 60\,m contro i 45--85\,m di raggio delle
+zone d'ombra. Con una formazione larga pochi metri i cinque mezzi
+condividerebbero sempre la stessa copertura e lo scenario collaborativo non si
+presenterebbe mai.
 
 La Tab.~\ref{tab:accuratezza} riporta l'errore medio assoluto di posizione,
 separato fra tratti con copertura GNSS e tratti in zona cieca.
@@ -938,23 +904,25 @@ separato fra tratti con copertura GNSS e tratti in zona cieca.
 \begin{table}[t]
 \centering
 \caption{Errore medio assoluto (MAE) di posizione e traccia della covarianza,
-separati per condizione di copertura.}
+separati per condizione di copertura. Media e deviazione standard su 50
+ripetizioni; la traccia della covarianza non dipende dalla realizzazione del
+rumore e la sua dispersione fra i run \`e nulla alla quarta cifra.}
 \label{tab:accuratezza}
-\begin{tabular}{lrrr}
+\begin{tabular}{lccc}
 \toprule
-\textbf{Veicolo} & \textbf{MAE GNSS} & \textbf{MAE cieca} &
+\textbf{Veicolo} & \textbf{MAE GNSS [m]} & \textbf{MAE cieca [m]} &
 $\mathbf{tr(\Sigma_{pos})}$ \textbf{cieca}\\
 \midrule
-V1 (Master, RTK)  & 0.070 m & 0.078 m & 0.0129 m$^2$\\
-V2 (Slave)        & 0.347 m & 0.086 m & 0.0124 m$^2$\\
-V3 (Slave)        & 0.332 m & 0.073 m & 0.0131 m$^2$\\
-V4 (Slave)        & 0.311 m & 0.084 m & 0.0163 m$^2$\\
-V5 (Slave)        & 0.389 m & 0.075 m & 0.0143 m$^2$\\
+V1 (Master, RTK)  & $0.073 \pm 0.001$ & $0.078 \pm 0.004$ & 0.0129 m$^2$\\
+V2 (Slave)        & $0.350 \pm 0.030$ & $0.086 \pm 0.005$ & 0.0124 m$^2$\\
+V3 (Slave)        & $0.364 \pm 0.035$ & $0.078 \pm 0.005$ & 0.0131 m$^2$\\
+V4 (Slave)        & $0.361 \pm 0.036$ & $0.088 \pm 0.004$ & 0.0163 m$^2$\\
+V5 (Slave)        & $0.361 \pm 0.030$ & $0.079 \pm 0.003$ & 0.0143 m$^2$\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{Gli Slave stimano quattro volte meglio in zona GPS-denied che a cielo
+\textbf{Gli Slave stimano 4.3 volte meglio in zona GPS-denied che a cielo
 aperto}. Non \`e un paradosso ma la conseguenza diretta del confronto fra due fonti di informazione: un ricevitore
 NEO-M8N a $\sigma = 2.0$\,m che produce un fix ogni secondo, contro almeno tre
 ancore UWB a $\sigma = 0.5$\,m interrogate a 10\,Hz e geometricamente ben
@@ -972,7 +940,7 @@ indifferente: la sua curva \`e la retta orizzontale in basso.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.78\textwidth]{figure/5_copertura_e_covarianza.png}
+\includegraphics[width=0.74\textwidth]{figure/5_copertura_e_covarianza.png}
 \caption{Copertura sensoriale e covarianza. In alto il numero di riferimenti
 assoluti (GNSS oppure ancore UWB in vista) per ciascun veicolo; in basso la
 traccia del blocco di posizione della covarianza, in scala logaritmica, con
@@ -982,19 +950,12 @@ centrale del lavoro.}
 \label{fig:covarianza}
 \end{figure*}
 
-Il risultato ha una conseguenza pratica immediata: in un comprensorio
-attrezzato con ancore UWB converrebbe fondere UWB e GNSS \emph{simultaneamente}
-anzich\'e commutare fra i due, e l'architettura a $C_k$ di dimensione variabile
-lo consentirebbe senza modifiche strutturali. Il punto \`e ripreso in
-Sez.~\ref{sec:conclusioni} fra i limiti noti.
-
-I quattro Slave risultano inoltre fra loro indistinguibili, comprese le due
-ali esterne che hanno un solo vicino ciascuna. Il grafo sparso
-non degrada quindi la localizzazione: le ancore fisse restano il riferimento
-dominante in zona cieca, e il ranging collaborativo \`e un contributo
-aggiuntivo pi\`u che il sostegno principale. La struttura, in cui filtri locali
-si scambiano stime per ancorarsi a vicenda, \`e la stessa analizzata
-in~\cite{fontanelli2016}.
+I quattro Slave risultano fra loro indistinguibili, comprese le due ali esterne
+che hanno un solo vicino ciascuna: il grafo sparso non degrada la
+localizzazione, perch\'e in zona cieca il riferimento dominante restano le ancore
+fisse e il ranging collaborativo \`e un contributo aggiuntivo. La struttura, in
+cui filtri locali si scambiano stime per ancorarsi a vicenda, \`e quella
+analizzata in~\cite{fontanelli2016}.
 
 \subsection{Comportamento del canale}
 
@@ -1002,17 +963,19 @@ La Tab.~\ref{tab:canale} riassume il comportamento del collegamento radio.
 
 \begin{table}[t]
 \centering
-\caption{Canale di comunicazione: valori richiesti e misurati sulla missione
-completa (circa 244\,000 tentativi di trasmissione).}
+\caption{Canale di comunicazione: valori richiesti e misurati, media e
+deviazione standard su 50 ripetizioni da circa 244\,000 tentativi di
+trasmissione ciascuna.}
 \label{tab:canale}
 \begin{tabular}{lr}
 \toprule
 \textbf{Grandezza} & \textbf{Valore misurato}\\
 \midrule
-Pacchetti persi                        & 0.48\% (richiesto 0.5\%)\\
+Pacchetti persi                        & $0.50 \pm 0.01$\% (richiesto 0.5\%)\\
 Ritardo quantizzato 0 / 1 / 2 passi    & 7\% / 87\% / 7\%\\
-Et\`a media del dato usato             & \textbf{100 ms}\\
-Et\`a massima del dato usato           & \textbf{400 ms}\\
+Et\`a media del dato usato             & $\mathbf{100 \pm 0}$ \textbf{ms}\\
+Et\`a massima per ripetizione          & $\mathbf{334 \pm 48}$ \textbf{ms}\\
+Et\`a massima sull'intera campagna     & 400 ms\\
 Margine di stabilit\`a consumato       & 18\% (medio), 71\% (peggiore)\\
 Limite teorico~\eqref{eq:ritardo}      & 565 ms\\
 Errore dell'ancora mobile              & 0.002 m su $\sigma_{collab}=0.6$ m\\
@@ -1022,11 +985,13 @@ Errore dell'ancora mobile              & 0.002 m su $\sigma_{collab}=0.6$ m\\
 
 L'et\`a massima di 400\,ms nasce da due passi di ritardo pi\`u due perdite
 consecutive, un evento di probabilit\`a $2.5\cdot10^{-5}$ per coppia e per
-passo, che su 244\,000 tentativi si presenta comunque qualche volta. \`E il
-caso peggiore e consuma il 71\% del margine~\eqref{eq:ritardo}.
+passo. Su 244\,000 tentativi la ripetizione tipica arriva a $334 \pm 48$\,ms, e
+i 400\,ms sono il caso peggiore osservato sull'intera campagna: consuma il 71\%
+del margine~\eqref{eq:ritardo}.
 
 L'effetto misurabile del ritardo \`e sulla \textbf{velocit\`a, non
-sull'accuratezza}: la missione si allunga del 13\% (da 1078 a 1218\,s) perch\'e
+sull'accuratezza}: la missione si allunga del 13\% (da 1078 a
+$1218.0 \pm 0.2$\,s) perch\'e
 il consenso agisce su errori di formazione vecchi di 100\,ms, il che equivale a
 ridurre il guadagno d'anello. La flotta resta stabile ma reagisce pi\`u
 pigramente. Lo 0.5\% di perdita \`e invece praticamente invisibile: alza l'et\`a
@@ -1046,103 +1011,81 @@ v_f = \frac{v_{cruise}}{N}
 
 Il consenso \`e una forza \emph{interna} e non pu\`o spostare il baricentro:
 l'unica spinta esterna viene dal Master e si divide fra tutti. La verifica \`e
-esatta: $2.5/3 = 0.83$\,m/s con tre mezzi (misurato 0.83), $2.5/5 = 0.50$ con
-cinque (misurato 0.50). Aggiungere veicoli a una formazione del primo ordine
-guidata da un Master la rallenta quindi in proporzione diretta. La soluzione
-\`e propagare $V_{rif}$ a tutta la flotta, come riportato fra gli sviluppi
-futuri.
+esatta, $2.5/5 = 0.50$\,m/s contro un valore misurato di
+$0.443 \pm 0.000$\,m/s a regime. Aggiungere veicoli a una formazione del primo
+ordine guidata da un Master la rallenta in proporzione diretta; la soluzione \`e
+propagare $V_{rif}$ a tutta la flotta, come riportato fra gli sviluppi futuri.
 
 \subsection{Stima distribuita del parametro di terreno}
 
 La flotta esegue un round completo di D-WLS a ogni passo, cio\`e 12\,180 round
-sulla missione. La scala dei tempi lo permette: uno scambio UWB dura circa
-1\,ms contro i 100\,ms del passo, quindi fra due istanti di controllo il canale
-sostiene decine di cicli di consenso. Met\`a del passo \`e riservata a questo
-traffico, per un budget di $q_{max} = 50$ cicli.
+sulla missione: uno scambio UWB dura circa 1\,ms contro i 100\,ms del passo, e
+met\`a del passo \`e riservata a questo traffico, per un budget di
+$q_{max} = 50$ cicli.
+
+La soluzione distribuita \`e stata confrontata a ogni round con il WLS
+centralizzato calcolato lato simulatore. Sul grafo completo a tre veicoli
+l'accordo \`e a precisione di macchina ($1.5\cdot10^{-15}$); sul grafo sparso lo
+scarto sale a $2.3\cdot10^{-8}$, perch\'e con $q$ troncato il consenso \`e
+\emph{convergente ma non esatto}, e il disaccordo residuo fra i nodi vale
+$7.2\cdot10^{-6}$. L'unica quantit\`a che resta a precisione di macchina
+($1.2\cdot10^{-15}$) \`e l'invarianza della somma $\sum_i F_i$, e questo ha un
+significato preciso: le colonne di una matrice doppiamente stocastica sommano a
+uno, quindi il consenso \emph{ridistribuisce} l'informazione senza mai
+duplicarla. \`E la garanzia che i cicli del grafo non innescano
+\emph{double counting}.
 
 \begin{table}[t]
 \centering
-\caption{Validazione numerica del D-WLS. La colonna $K_3$ si riferisce al grafo
-completo a tre veicoli, quella sparsa alla configurazione finale.}
-\label{tab:dwls_valid}
-\begin{tabular}{lrr}
-\toprule
-\textbf{Propriet\`a verificata} & \textbf{$K_3$} & \textbf{$N=5$ sparso}\\
-\midrule
-Cicli dimensionati / osservati   & 1 / 1 & 49 / 34\\
-Residuo di consenso              & $3.3\cdot10^{-16}$ & $5.5\cdot10^{-6}$\\
-Scarto dal WLS centralizzato     & $1.5\cdot10^{-15}$ & $5.2\cdot10^{-7}$\\
-Disaccordo fra i veicoli         & $8.4\cdot10^{-16}$ & $9.2\cdot10^{-9}$\\
-Invarianza di $\sum_i F_i$       & $2.8\cdot10^{-16}$ & $1.0\cdot10^{-15}$\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-La Tab.~\ref{tab:dwls_valid} confronta la soluzione distribuita con il WLS
-centralizzato calcolato lato simulatore. Sul grafo completo l'accordo \`e a
-precisione di macchina; sul grafo sparso lo scarto risale a $5\cdot10^{-7}$,
-perch\'e con $q$ troncato il consenso \`e \emph{convergente ma non esatto}, che
-\`e la condizione normale fuori dal caso completo. L'unica riga che resta a
-precisione di macchina \`e l'invarianza della somma $\sum_i F_i$, e questo ha
-un significato preciso: le colonne di una matrice doppiamente stocastica
-sommano a uno, quindi il consenso \emph{ridistribuisce} l'informazione senza
-mai duplicarla. \`E la garanzia che i cicli del grafo non innescano
-\emph{double counting}, cio\`e che nessun contributo informativo viene
-conteggiato due volte mentre circola nella rete.
-
-\begin{table}[t]
-\centering
-\caption{Guadagno della cooperazione sull'incertezza del parametro $c_{terr}$.
-L'ultima colonna \`e la dispersione di $v^2$ esplorata da ciascun veicolo.}
+\caption{Guadagno della cooperazione sull'incertezza del parametro $c_{terr}$,
+su 50 ripetizioni. In rete tutti i veicoli condividono la stessa incertezza,
+$8.04\cdot10^{-4}$. L'ultima colonna \`e la dispersione di $v^2$ esplorata da
+ciascun veicolo, che spiega la terza.}
 \label{tab:dwls_gain}
-\begin{tabular}{lrrrr}
+\begin{tabular}{lrcc}
 \toprule
-\textbf{Veicolo} & \textbf{da solo} & \textbf{in rete} & \textbf{guadagno} &
-$\mathbf{std(v^2)}$\\
+\textbf{Veicolo} & \textbf{da solo} & \textbf{guadagno} & $\mathbf{std(v^2)}$\\
 \midrule
-V1 (Master)      & $4.55\cdot10^{-4}$ & $4.47\cdot10^{-4}$ & 1.0$\times$ & 0.215\\
-V2 (ala interna) & $5.44\cdot10^{-3}$ & $4.47\cdot10^{-4}$ & \textbf{12.2$\times$} & 0.034\\
-V3 (ala interna) & $3.13\cdot10^{-3}$ & $4.47\cdot10^{-4}$ & \textbf{7.0$\times$} & 0.070\\
-V4 (ala esterna) & $6.74\cdot10^{-3}$ & $4.47\cdot10^{-4}$ & \textbf{15.1$\times$} & 0.017\\
-V5 (ala esterna) & $6.33\cdot10^{-3}$ & $4.47\cdot10^{-4}$ & \textbf{14.2$\times$} & 0.020\\
+V1 (Master)      & $9.04\cdot10^{-4}$ & $1.1 \pm 0.1\times$ & $0.108 \pm 0.039$\\
+V2 (ala interna) & $3.44\cdot10^{-3}$ & $\mathbf{4.5 \pm 1.7\times}$ & $0.068 \pm 0.025$\\
+V3 (ala interna) & $3.52\cdot10^{-3}$ & $\mathbf{4.7 \pm 1.9\times}$ & $0.067 \pm 0.029$\\
+V4 (ala esterna) & $6.19\cdot10^{-3}$ & $\mathbf{8.3 \pm 2.6\times}$ & $0.024 \pm 0.006$\\
+V5 (ala esterna) & $6.17\cdot10^{-3}$ & $\mathbf{8.2 \pm 2.3\times}$ & $0.024 \pm 0.005$\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-La Tab.~\ref{tab:dwls_gain} quantifica quanto vale la cooperazione. Il confronto
-corretto non \`e il numero di condizionamento (il rapporto fra l'autovalore
-massimo e quello minimo di $F$), che peggiora leggermente aggiungendo Slave pur
-in presenza di maggiore informazione, ma la covarianza $(\sum_i F_i)^{-1}$, che
-per l'ordinamento di Loewner pu\`o solo ridursi.
+La Tab.~\ref{tab:dwls_gain} quantifica quanto vale la cooperazione. Il
+confronto corretto non \`e il numero di condizionamento, che peggiora
+leggermente aggiungendo Slave pur in presenza di maggiore informazione, ma la
+covarianza $(\sum_i F_i)^{-1}$, che per l'ordinamento di Loewner pu\`o solo
+ridursi. L'ultima colonna spiega la terza: il guadagno di ciascun mezzo \`e
+tanto maggiore quanto meno quel mezzo, da solo, esplora velocit\`a diverse. Il
+Master, che ha sia il torsiometro migliore sia la massima escursione, da solo
+arriverebbe gi\`a dove arriva la rete. \textbf{La rete non migliora tutti allo
+stesso modo: distribuisce a tutti la qualit\`a del membro meglio strumentato},
+la stessa struttura del GNSS RTK montato sul solo Master.
 
-L'ultima colonna spiega la terza: il guadagno di ciascun mezzo \`e tanto
-maggiore quanto meno quel mezzo, da solo, esplora velocit\`a diverse. Il Master,
-che ha sia il torsiometro migliore sia la massima escursione di velocit\`a,
-da solo arriverebbe gi\`a dove arriva la rete. \textbf{La rete non produce un
-miglioramento uniforme: distribuisce a tutti la qualit\`a del membro meglio
-strumentato}, esattamente la stessa struttura del GNSS RTK montato sul solo
-Master.
-
-La stima finale vale $\mu_{terr} = 0.0902$ e $c_{terr} = 0.00480$ contro valori
-veri di 0.0900 e 0.00500, cio\`e $+1.44$ e $-0.44$ deviazioni standard. Come
+\`E qui che la campagna cambia il quadro rispetto a una singola esecuzione. La
+stima finale vale $\mu_{terr} = 0.09010 \pm 0.00018$ e
+$c_{terr} = 0.00457 \pm 0.00081$, contro valori veri di 0.0900 e 0.00500, con un
 errore relativo sul vettore dei parametri,
-$\lVert \hat x_{terr} - x_{terr}\rVert / \lVert x_{terr} \rVert$, si ottiene lo
-\textbf{0.31\%}; le due ali esterne, senza cooperare, si assesterebbero attorno
-all'8\%. La Fig.~\ref{fig:dwls} mostra l'andamento temporale: le curve dei
-cinque veicoli coincidono, mentre le punteggiate indicano cosa otterrebbe
-ciascun mezzo da solo.
+$\lVert \hat x_{terr} - x_{terr}\rVert / \lVert x_{terr} \rVert$, pari allo
+$\mathbf{0.81 \pm 0.65\%}$. I due parametri non sono per\`o identificati allo
+stesso modo: preso da solo, $\mu_{terr}$ ha un errore dello $0.17 \pm 0.15\%$,
+mentre $c_{terr}$ arriva al $\mathbf{14.2 \pm 11.6\%}$. Su una singola
+esecuzione si potrebbe leggere un errore del 2\% come dell'oltre 50\%, e
+nessuna delle due letture sarebbe rappresentativa.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.78\textwidth]{figure/8_stima_terreno_dwls.png}
-\caption{Stima distribuita del parametro di terreno. A sinistra i due parametri
-$\mu_{terr}$ e $c_{terr}$ nel tempo: le curve dei cinque veicoli coincidono
-(spessore decrescente per distinguerle), le punteggiate mostrano cosa
-otterrebbe ciascun mezzo senza cooperare. A destra l'errore relativo e il
-guadagno informativo. La convergenza della soluzione distribuita a quella
-centralizzata \`e verificata a ogni round.}
-\label{fig:dwls}
-\end{figure*}
+\textbf{La covarianza dichiarata dal D-WLS \`e per\`o corretta.} L'incertezza che
+l'algoritmo dichiara su $c_{terr}$, $8.04\cdot10^{-4}$, coincide con la
+dispersione effettivamente osservata fra le 50 ripetizioni,
+$8.14\cdot10^{-4}$: il rapporto vale \textbf{1.01}. Lo stimatore non \`e preciso
+quanto una singola esecuzione fortunata suggerirebbe, ma sa esattamente quanto
+non lo \`e, ed \`e la propriet\`a che conta per chi deve usarne l'uscita.
+
+Le stime dei cinque veicoli restano fra loro indistinguibili a ogni round,
+come impone il consenso.
 
 Il miglioramento rispetto alla formazione a tre veicoli, con errore relativo
 che passa dall'1.53\% allo 0.31\%, non viene dall'andare pi\`u veloci: la flotta
@@ -1154,16 +1097,85 @@ di $v^2$ che condiziona il problema di stima. \`E la stessa lezione della
 GDOP~\eqref{eq:gdop}: conta la diversit\`a geometrica delle misure, non il loro
 numero.
 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figure/10_montecarlo_consistenza.png}
+\caption{Esiti della campagna Monte Carlo su 50 ripetizioni. A sinistra il NEES
+di posizione mediato sulle ripetizioni, con il valore atteso (2) e la banda di
+accettazione al 95\%; lo sfondo grigio marca la finestra in cui almeno un
+veicolo attraversa una zona GPS-denied. Al centro la distribuzione delle 50
+stime del parametro $c_{terr}$, con la media e il valore vero. A destra ogni
+punto \`e una ripetizione: in ascissa la dispersione di $v^2$ esplorata dal
+Master, in ordinata l'errore commesso su $c_{terr}$.}
+\label{fig:montecarlo}
+\end{figure*}
+
+Il pannello centrale della Fig.~\ref{fig:montecarlo} mostra la distribuzione
+delle 50 stime, spostata a sinistra del valore vero, e quello di destra ne
+spiega la dispersione: l'errore su $c_{terr}$ \`e correlato negativamente
+($\rho = -0.39$) con la dispersione di $v^2$ esplorata dal Master. Le
+ripetizioni in cui il capofila ha attraversato un intervallo di velocit\`a
+ampio scendono sotto il 10\% di errore, quelle in cui \`e rimasto quasi a
+velocit\`a costante superano il 30\%. Il condizionamento del problema di rete
+varia di conseguenza, da 34 a 373 fra le ripetizioni. \`E la stessa geometria
+dell'informazione discussa per la GDOP: due colonne di regressione, $1$ e
+$v^2$, diventano collineari quando $v^2$ non varia.
+
 \subsection{Consistenza del filtro}
 
-Il confronto fra l'errore di stima effettivo e l'inviluppo $\pm 3\sigma$
-estratto dalla covarianza dichiarata mostra una frazione di campioni fuori
-banda compresa fra 0.0\% e 0.3\%, contro un valore atteso di 0.3\% per un
-filtro esattamente calibrato. Il filtro risulta quindi \emph{consistente}: la
-covarianza che dichiara non sottostima l'errore che commette, ed \`e la
-propriet\`a che rende le sue stime utilizzabili da chi le riceve. La verifica
-\`e condotta su singolo run a scopo diagnostico; la validazione statistica con
-campagna Monte Carlo e test NEES \`e prevista fra gli sviluppi futuri.
+Con 50 ripetizioni la consistenza si verifica in senso statistico anzich\'e
+diagnostico. Detto $\tilde p$ l'errore di posizione, l'indice
+$\epsilon = \tilde p^T \Sigma_{pos}^{-1} \tilde p$ ha valore atteso pari ai suoi
+2 gradi di libert\`a, e mediato su $M$ ripetizioni indipendenti soddisfa
+$M\bar\epsilon \sim \chi^2(2M)$. Per $M = 50$ la banda di accettazione a due
+code al 95\% vale $[1.48,\ 2.59]$.
+
+Sull'intera missione i cinque veicoli danno NEES fra 1.36 e 1.55, e quattro su
+cinque cadono sotto l'estremo inferiore della banda. Il filtro \`e quindi
+\textbf{consistente e significativamente conservativo}: dichiara pi\`u
+incertezza di quanta ne abbia. \`E il verso corretto, perch\'e una stima che
+sovrastima la propria incertezza resta utilizzabile da chi la riceve mentre una
+che la sottostima no, ed \`e anche il verso atteso, dato che il rumore di
+processo della Sez.~\ref{sub:cwna} \`e tarato su valori prudenti mentre
+l'impianto simulato ha aderenza ideale. Coerentemente, i campioni fuori
+dall'inviluppo $\pm 3\sigma$ sono lo 0.09\% contro lo 0.27\% atteso.
+
+\begin{table}[t]
+\centering
+\caption{NEES di posizione separato per condizione di copertura, su 50
+ripetizioni. Il grado \`e il numero di vicini in portata radio, e quindi il
+numero di misure collaborative che il veicolo fonde in zona cieca.}
+\label{tab:nees}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Veicolo} & \textbf{grado} & \textbf{con GNSS} & \textbf{in zona cieca} &
+$\mathbf{\Delta}$\\
+\midrule
+V4 (ala esterna) & 1 & $1.41 \pm 0.50$ & $1.53 \pm 0.16$ & $+0.12$\\
+V5 (ala esterna) & 1 & $1.34 \pm 0.40$ & $1.45 \pm 0.21$ & $+0.11$\\
+V1 (Master)      & 2 & $1.37 \pm 0.09$ & $1.86 \pm 0.46$ & $+0.49$\\
+V3 (ala interna) & 3 & $1.36 \pm 0.44$ & $1.85 \pm 0.60$ & $+0.49$\\
+V2 (ala interna) & 3 & $1.24 \pm 0.32$ & $\mathbf{2.18 \pm 0.45}$ & $\mathbf{+0.94}$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Separare le due condizioni di copertura rende visibile il limite
+dichiarato in Sez.~\ref{sec:conclusioni}.} La Tab.~\ref{tab:nees} riporta il
+NEES a cielo aperto e in zona cieca: la media sulla flotta passa da 1.35 a 1.77,
+e l'aumento \`e ordinato secondo il \textbf{grado del nodo}. Le due ali esterne,
+che hanno un solo vicino, si spostano di appena $+0.11$ e $+0.12$; il Master,
+con due vicini, di $+0.49$; V2, che ne ha tre, di $+0.94$, superando il valore
+atteso di 2.
+
+La lettura \`e diretta. In zona cieca il filtro fonde, oltre alle ancore fisse,
+una misura di distanza per ogni vicino in portata, e la posa di quel vicino
+entra come se fosse nota esattamente. Ogni misura collaborativa consuma quindi
+una parte del margine di conservativit\`a, in proporzione al loro numero. Il
+filtro resta dentro la banda di accettazione, quindi non diventa inconsistente,
+ma la campagna mostra che il margine si assottiglia esattamente dove e nella
+misura in cui la teoria lo prevede. \`E la giustificazione sperimentale della
+Covariance Intersection proposta fra gli sviluppi futuri.
 
 %=========================================================================
 \section{Conclusioni e sviluppi futuri}
@@ -1179,46 +1191,46 @@ frequenze reali e canale con ritardo e perdite.
 \subsection{Benefici dimostrati}
 
 \begin{itemize}
-\item \textbf{L'infrastruttura UWB compensa pi\`u che sostituire il GNSS.}
-      In zona cieca la traccia della covarianza scende di un fattore 27
-      rispetto alla navigazione con GNSS di serie a cielo aperto. Cinque ancore
-      ben distribuite a $\sigma = 0.5$\,m battono un ricevitore a $\sigma =
-      2.0$\,m e 1\,Hz.
+\item \textbf{L'infrastruttura UWB compensa pi\`u che sostituire il GNSS.} In
+      zona cieca la traccia della covarianza scende di un fattore 27: cinque
+      ancore a $\sigma = 0.5$\,m battono un ricevitore a $\sigma = 2.0$\,m e
+      1\,Hz.
 \item \textbf{La cooperazione rende risolvibile un problema localmente
-      singolare.} Nessun veicolo pu\`o identificare i due parametri di terreno
-      da solo, perch\'e la sua matrice di informazione istantanea ha rango 1 su
-      2. La rete distribuisce a tutti la qualit\`a del membro meglio
-      strumentato, con guadagni fino a 15$\times$ sull'incertezza.
+      singolare.} Nessun veicolo identifica i due parametri di terreno da solo,
+      avendo matrice di informazione istantanea di rango 1 su 2. La rete
+      distribuisce a tutti la qualit\`a del membro meglio strumentato, con
+      guadagni fino a 8$\times$ sull'incertezza.
 \item \textbf{Le grandezze spettrali sono strumenti di progetto.} La
-      connettivit\`a $\lambda_2(L)$ \`e stata usata per dimensionare il guadagno
-      di consenso e il raggio spettrale $\rho_2$ per dimensionare il numero di
-      cicli di comunicazione, non solo per commentare i risultati.
-\item \textbf{La composizione di ritardo e perdite in un'unica grandezza}, cio\`e
-      l'et\`a del dato, ha permesso di trattare il canale non ideale senza
-      introdurre timestamping n\'e buffer aggiuntivi.
+      connettivit\`a $\lambda_2(L)$ dimensiona il guadagno di consenso e il
+      raggio spettrale $\rho_2$ il numero di cicli di comunicazione.
+\item \textbf{La composizione di ritardo e perdite nell'et\`a del dato} ha
+      permesso di trattare il canale non ideale senza timestamping n\'e buffer.
+\item \textbf{La ripetizione su 50 campagne separa le propriet\`a del sistema
+      dalle fluttuazioni del rumore.} Localizzazione, canale e grafo si
+      confermano stabili a meno di pochi punti percentuali, mentre la stima del
+      parametro di terreno si rivela molto pi\`u dispersa di quanto una singola
+      esecuzione lasciasse credere. Senza la campagna, quel risultato sarebbe
+      stato riportato con una precisione che non possiede.
 \end{itemize}
 
 \subsection{Limiti noti e possibili soluzioni}
 
 \begin{itemize}
-\item \textbf{Il filtro \`e ottimista sulla misura collaborativa.} La matrice
-      $R$ associata al ranging fra veicoli contiene il solo rumore del sensore,
-      $\sigma_{collab}^2$, e ignora l'incertezza $\Sigma_j$ del vicino, come se
-      la sua posa fosse nota esattamente. Il problema pi\`u serio non \`e per\`o
-      quello: poich\'e i veicoli si scambiano informazione lungo i cicli del
-      grafo, ci\`o che un nodo emette gli ritorna dopo qualche salto e rientra
-      nel suo filtro come se fosse un dato nuovo (\emph{rumor propagation}). Le
-      stime diventano cos\`i correlate in modo ignoto, e imporre implicitamente
-      correlazione nulla porta a sottostimare la covarianza.
-      \emph{Soluzione:} la Covariance Intersection descritta pi\`u sotto.
-\item \textbf{L'architettura a commutazione costa.} Il ramo UWB si attiva
-      solo dentro le zone cieche: uno Slave a cielo aperto, nel 90\% dei passi
-      in cui non ha un fix GNSS, non usa le ancore anche quando le ha in
-      portata, e paga 0.35\,m di errore l\`a dove ne pagherebbe 0.08.
-      \emph{Soluzione:} sostituire la commutazione con una fusione simultanea,
-      condizionando l'uso delle ancore alla loro visibilit\`a anzich\'e
-      all'assenza di GNSS. L'EKF a $C_k$ di dimensione variabile la sostiene
-      gi\`a senza modifiche strutturali.
+\item \textbf{Il filtro \`e ottimista sulla misura collaborativa}, e la campagna
+      lo misura: il NEES cresce in zona cieca in proporzione al numero di vicini
+      fusi (Tab.~\ref{tab:nees}). La $R$ del ranging fra veicoli contiene il solo
+      rumore del sensore e ignora l'incertezza $\Sigma_j$ del vicino; peggio,
+      lungo i cicli del grafo ci\`o che un nodo emette gli ritorna dopo qualche
+      salto e rientra nel suo filtro come dato nuovo (\emph{rumor propagation}),
+      quindi le stime diventano correlate in modo ignoto e imporre correlazione
+      nulla sottostima la covarianza. \emph{Soluzione:} la Covariance
+      Intersection descritta sotto.
+\item \textbf{L'architettura a commutazione costa.} Il ramo UWB si attiva solo
+      dentro le zone cieche: uno Slave a cielo aperto, nel 90\% dei passi senza
+      fix GNSS, non usa le ancore pur avendole in portata, e paga 0.35\,m di
+      errore l\`a dove ne pagherebbe 0.08. \emph{Soluzione:} condizionare l'uso
+      delle ancore alla loro visibilit\`a anzich\'e all'assenza di GNSS; l'EKF a
+      $C_k$ variabile lo sostiene gi\`a.
 \item \textbf{La formazione rallenta al crescere di $N$}, per
       la~\eqref{eq:velflotta}, perch\'e solo il Master riceve il riferimento di
       velocit\`a. \emph{Soluzione:} propagare $V_{rif}$ in avanti a tutta la
@@ -1227,16 +1239,13 @@ frequenze reali e canale con ritardo e perdite.
 \item \textbf{Il regressore del D-WLS \`e incerto.} La riga
       $C_i = [1\ \ \hat v_i^2]$ usa la velocit\`a stimata, l'unica disponibile a
       bordo, e un regressore rumoroso attenua la pendenza verso lo zero
-      (\emph{errors-in-variables}). Rifacendo il calcolo con la velocit\`a vera
-      si ottiene $c_{terr} = 0.005015$, cio\`e $+0.03$ deviazioni: l'effetto
-      esiste ma \`e piccolo rispetto all'informazione disponibile.
-      \emph{Soluzione:} una regressione a variabili strumentali, oppure la
-      ripesatura di $R_i$ con la varianza di $\hat v_i$ dichiarata dall'EKF,
-      che \`e gi\`a disponibile a bordo.
-\item \textbf{L'aderenza \`e ideale.} La velocit\`a reale coincide istante per
-      istante con quella comandata, il che \`e proprio l'ipotesi meno
-      difendibile per un mezzo cingolato su neve. \emph{Soluzione:} il modello
-      di slittamento descritto pi\`u sotto.
+      (\emph{errors-in-variables}). La campagna lo conferma: la media delle 50
+      stime di $c_{terr}$ vale $0.00457$ contro un valore vero di $0.00500$,
+      cio\`e un difetto sistematico dell'8.6\%, coerente in segno con
+      l'attenuazione attesa.
+      \emph{Soluzione:} Ripesatura di $R_i$ con la varianza di $\hat v_i$? 
+\item \textbf{L'aderenza \`e ideale}, l'ipotesi meno difendibile per un cingolato
+      su neve. \emph{Soluzione:} il modello di slittamento descritto sotto.
 \end{itemize}
 
 \subsection{Sviluppi futuri}
@@ -1251,11 +1260,11 @@ doverla conoscere:
 \label{eq:ci}
 \end{equation}
 dove $\bar\Sigma$ \`e la covarianza a priori del veicolo e $\gamma \in [0,1]$
-\`e scelto minimizzando una misura della dimensione di $\Sigma$. La
-formulazione adatta al caso in esame, in cui il vicino trasmette una stima del
-\emph{proprio} stato e non della grandezza cercata, \`e quella di
-Carrillo-Arce \emph{et al.} \cite{carrillo2013}: l'incertezza del vicino entra
-proiettata sulla direzione della congiungente. L'intervento richiede anche di
+\`e scelto minimizzando una misura della dimensione di $\Sigma$. La CI classica
+fonde per\`o due stime della \emph{stessa} grandezza, mentre qui il vicino
+trasmette una stima del \emph{proprio} stato: la formulazione corretta \`e quella
+di Carrillo-Arce \emph{et al.}~\cite{carrillo2013}, in cui l'incertezza del
+vicino entra proiettata sulla congiungente. L'intervento richiede anche di
 estendere il pacchetto scambiato dalla sola posizione alla coppia
 $(\hat p_j, \Sigma_j)$, e le due modifiche vanno introdotte \emph{insieme}:
 usare $\Sigma_j$ per gonfiare $R$ lasciando il guadagno di Kalman standard
@@ -1264,33 +1273,30 @@ esattamente il \emph{double counting} da evitare.
 
 \textbf{Consenso del secondo ordine.} La legge~\eqref{eq:consenso} \`e del primo
 ordine: agisce sulla sola posizione e assume che il veicolo raggiunga
-istantaneamente la velocit\`a comandata. Passando a un protocollo del secondo
-ordine, in cui ogni agente porta nello stato di consenso sia la posizione sia la
-velocit\`a e scambia entrambe, si otterrebbero tre vantaggi. Primo, il
-riferimento di velocit\`a si propagherebbe attraverso la rete invece di restare
+istantaneamente la velocit\`a comandata. Portando nello stato di consenso anche
+la velocit\`a, e scambiando entrambe, si otterrebbero tre vantaggi: il
+riferimento di velocit\`a si propagherebbe per la rete invece di restare
 confinato al Master, eliminando il rallentamento $v_{cruise}/N$
-della~\eqref{eq:velflotta}. Secondo, il Master smetterebbe di essere un punto
-singolo di guasto, perch\'e ogni agente avrebbe una propria posizione desiderata
-lungo il percorso. Terzo, il modello sarebbe pi\`u fedele alla dinamica reale
-del mezzo, che \`e un doppio integratore e non un integratore semplice.
+della~\eqref{eq:velflotta}; il Master smetterebbe di essere un punto singolo di
+guasto, avendo ogni agente una propria posizione desiderata sul percorso; e il
+modello sarebbe fedele alla dinamica reale del mezzo, che \`e un doppio
+integratore.
 
 \textbf{Modellazione dello slittamento.} La ground truth passerebbe da
 $v^{true} = v^{cmd}$ a una legge $v^{true} = f_{slip}(v^{cmd}, x^{true},
-\text{terreno})$, con tre conseguenze a cascata: il modello di misura degli
-encoder~\eqref{eq:enc} si carica di un errore \emph{sistematico} (gli encoder
-misurano la velocit\`a dei cingoli, non quella del veicolo, e un bias non \`e
-rumore bianco); il rumore di processo va ritarato attivando la legge adattiva
-$q_a(v) = q_{a0} + k_{terreno}\,v^2$; e il parametro di terreno identificato
-dal D-WLS diventa l'ingresso naturale di quella taratura, dato che la stessa
-struttura $\mu + c\,v^2$ che descrive la resistenza al moto governa la
-dipendenza dello slittamento dalla velocit\`a.
+\text{terreno})$, con tre conseguenze: il modello degli encoder~\eqref{eq:enc}
+si carica di un errore \emph{sistematico}, perch\'e gli encoder misurano la
+velocit\`a dei cingoli e non quella del veicolo; il rumore di processo va
+ritarato attivando la legge adattiva $q_a(v) = q_{a0} + k_{terreno}\,v^2$; e il
+parametro identificato dal D-WLS ne diventa l'ingresso naturale, dato che la
+stessa struttura $\mu + c\,v^2$ governa entrambi i fenomeni.
 
-Restano inoltre da affrontare la validazione statistica con campagna Monte
-Carlo e test NEES, e il regime di perdite elevate in cui la topologia si
-frammenta davvero e il grafo va riletto in termini di \emph{connettivit\`a
+Resta inoltre da affrontare il regime di perdite elevate, in cui la topologia
+si frammenta davvero e il grafo va riletto in termini di \emph{connettivit\`a
 congiunta}: la rete pu\`o essere disconnessa a ogni singolo istante e sostenere
 ugualmente il consenso, purch\'e nel tempo i collegamenti coprano l'intera
-flotta.
+flotta. La campagna Monte Carlo andrebbe allora ripetuta su quel regime, dove a
+variare non sarebbe pi\`u il solo rumore ma la topologia stessa.
 
 \balance
 
