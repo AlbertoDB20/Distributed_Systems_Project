@@ -49,7 +49,7 @@ in aree dove la copertura satellitare \`e spesso degradata da valli strette,
 boschi e impianti di risalita. In queste condizioni una flotta di battipista
 deve mantenere una formazione precisa senza poter contare su un riferimento
 assoluto continuo e senza un calcolatore centrale.
-Questo lavoro presenta un'architettura completamente decentralizzata in cui
+Questo lavoro presenta un'architettura decentralizzata in cui
 ogni veicolo stima la propria posa con un \emph{Extended Kalman Filter} locale,
 mantiene la formazione con un protocollo di \emph{consenso lineare} sul grafo
 di comunicazione, e partecipa a una stima distribuita ai \emph{minimi quadrati
@@ -73,26 +73,16 @@ I gatti delle nevi, o battipista, sono mezzi cingolati di grandi dimensioni
 (circa 5\,m sui cingoli, 9\,m con fresa e lama) che lavorano in squadra per
 preparare le piste da sci. Il lavoro avviene quasi sempre di notte e su fondo
 a bassa aderenza, e la qualit\`a del risultato dipende dal mantenimento di
-una distanza precisa fra i mezzi: se due battipista si sovrappongono si spreca
-tempo, se lasciano un vuoto la pista risulta irregolare.
+una distanza precisa fra i mezzi.
 
-Il problema \`e interessante dal punto di vista dei sistemi distribuiti perch\'e
-riunisce tre difficolt\`a che nella pratica si presentano insieme:
-
-\begin{itemize}
-\item il segnale GNSS non \`e sempre disponibile, per via di valli strette,
-      copertura arborea e ostruzioni artificiali;
-\item non esiste un calcolatore centrale a bordo pista, quindi ogni decisione
-      va presa localmente con l'informazione che arriva dai vicini;
-\item la radio ha portata limitata, introduce ritardo e perde pacchetti,
-      quindi il grafo di comunicazione non \`e completo e non \`e ideale.
-\end{itemize}
 
 \subsection{Formulazione del problema}
 
 Si consideri una flotta di $N$ veicoli terrestri che si muove su una mappa
 piana di $500 \times 500$\,m contenente alcune zone in cui il segnale GNSS non
-\`e ricevibile. Ciascun veicolo $i$ deve:
+\`e ricevibile per via di valli strette, copertura arborea e ostruzioni artificiali. 
+
+Ciascun veicolo $i$ deve:
 
 \begin{enumerate}
 \item stimare in modo continuo la propria posa e le proprie velocit\`a,
@@ -100,7 +90,7 @@ piana di $500 \times 500$\,m contenente alcune zone in cui il segnale GNSS non
 \item mantenere una posizione assegnata all'interno di una formazione rigida,
       usando soltanto informazioni ricevute dai vicini raggiungibili via radio;
 \item evitare collisioni con gli altri membri della flotta;
-\item concorrere con gli altri all'identificazione di un parametro del terreno,
+\item concorrere con gli altri all'identificazione di un parametro caratteristico del terreno,
       uguale per tutti e costante nel tempo.
 \end{enumerate}
 
@@ -126,7 +116,7 @@ limiti e sviluppi futuri.
 \subsection{Sistema distribuito e sistema di comunicazione}
 
 Il sistema appartiene alla categoria della \emph{robotica distribuita} con
-\emph{percezione distribuita}: gli agenti sono mobili, ciascuno porta i propri
+\emph{percezione distribuita}: gli agenti sono mobili, ciascuno incorpora i propri
 sensori, e l'informazione utile nasce dalla combinazione di misure prese da
 agenti diversi.
 
@@ -144,9 +134,7 @@ Si definiscono:
 \end{itemize}
 
 Il collegamento fra due veicoli esiste se la loro distanza \`e inferiore al
-raggio di comunicazione $r_{collab}$. Si tratta della stessa radio UWB che
-fornisce la misura di distanza: non avrebbe senso che il canale dati
-raggiungesse un vicino con cui il ranging \`e impossibile.
+raggio di comunicazione $r_{collab} = 55m$.
 
 Accanto a $L$ si costruisce la \textbf{matrice di consenso} $Q$ con la regola
 di Metropolis-Hastings \cite{xiao2004}:
@@ -164,7 +152,7 @@ q_{ij} =
 dove $q_{ij}$ \`e il peso che il veicolo $i$ assegna all'informazione ricevuta
 da $j$. Ogni nodo calcola i propri pesi conoscendo soltanto il proprio grado e
 quello dei vicini diretti: nessuna conoscenza della topologia globale \`e
-richiesta, il che rende la regola effettivamente distribuita. La $Q$ risultante
+richiesta. La $Q$ risultante
 \`e simmetrica e quindi \emph{doppiamente stocastica} (righe e colonne sommano
 a uno), condizione necessaria perch\'e il consenso converga alla media
 aritmetica esatta e non a una combinazione pesata arbitraria.
@@ -206,7 +194,7 @@ l'angolo di imbardata rispetto all'asse $X$ globale [rad], $v_i$ la velocit\`a
 longitudinale [m/s] e $\omega_i$ la velocit\`a angolare [rad/s].
 
 L'inclusione di $v_i$ e $\omega_i$ \emph{nello stato} anzich\'e fra gli ingressi
-non \`e una scelta estetica. Su fondo nevoso il comando inviato ai motori non
+non \`e una scelta casuale. Su fondo nevoso il comando inviato ai motori non
 coincide con la velocit\`a effettiva del baricentro a causa dello slittamento:
 usarlo come ingresso deterministico introdurrebbe una correlazione fra rumore
 di processo e ingresso, violando le ipotesi del filtro di Kalman. Stimando le
@@ -335,9 +323,7 @@ Torsiometro Slave    & sensor.\ serie   & 0.025        & 10 Hz\\
 
 Due asimmetrie meritano una nota. La prima \`e fra Master e Slave: al solo
 veicolo capofila si attribuisce un ricevitore RTK e un torsiometro di qualit\`a
-superiore. \`E una scelta di progetto realistica --- attrezzare cinque mezzi
-allo stesso livello costa --- ed \`e anche ci\`o che rende osservabile il
-beneficio della cooperazione. La seconda \`e fra ranging verso ancora fissa
+superiore. \`E una scelta di progetto: rende "osservabile" quanto è informativo sulla rete un veicolo dotato di un equipaggiamento migliore in fase di cooperazione. La seconda asimmetria \`e fra ranging verso ancora fissa
 ($\sigma = 0.5$\,m) e ranging fra veicoli ($\sigma = 0.6$\,m): l'antenna del
 veicolo \`e pi\`u bassa e l'effetto della piattaforma metallica \`e presente su
 \emph{entrambi} i capi del collegamento anzich\'e su uno solo. La stessa fisica
@@ -394,11 +380,9 @@ la trasformata unscented a ogni cambio di configurazione.
 \subsection{Rumore di processo in forma CWNA}
 \label{sub:cwna}
 
-La matrice $Q_d$ non \`e una diagonale costante ma viene ricostruita a ogni
+La matrice $Q_d$ non \`e una diagonale costante ma viene ricostruita dinamicamente ad ogni
 passo secondo il modello CWNA (\emph{Continuous White Noise Acceleration})
-\cite{barshalom2001}. La ragione \`e fisica: nel modello uniciclo la posizione
-non possiede dinamica propria, cambia soltanto perch\'e $v$ e $\theta$ sono
-incerti. Una $Q_d$ diagonale inietterebbe rumore direttamente su $x$ e $y$,
+\cite{barshalom2001}. La motivazione \`e prettamente cinematica: nel modello uniciclo le coordinate $x$ e $y$ non possiedono una dinamica stocastica indipendente, ma evolvono unicamente in base alla propagazione dell'incertezza su $v$ e $\theta$. Una $Q_d$ diagonale inietterebbe rumore direttamente su $x$ e $y$,
 cio\`e affermerebbe che il veicolo si sposta lateralmente anche da fermo.
 
 Nel modello CWNA il rumore entra sulle \emph{accelerazioni}, dove agisce
@@ -416,8 +400,7 @@ Il risultato \emph{non} \`e diagonale: contiene le correlazioni
 posizione--velocit\`a, informazione fisica che una diagonale scarterebbe. I tre
 canali di rumore sono $q_a = 0.10$\,m$^2$/s$^3$ sull'accelerazione
 longitudinale, $q_\alpha = 0.01$\,rad$^2$/s$^3$ su quella angolare e
-$q_{lat} = 0.02$\,m$^2$/s sulla deriva laterale. Quest'ultimo non \`e un termine
-di comodo: l'uniciclo \`e anolonomo e non pu\`o rappresentare la traslazione
+$q_{lat} = 0.02$\,m$^2$/s sulla deriva laterale. Quest'ultimo \`e un termine fondamentale: l'uniciclo \`e anolonomo e non pu\`o rappresentare la traslazione
 laterale, quindi senza di esso $Q_d$ risulta singolare (rango 4 su 5) e
 l'incertezza perpendicolare alla marcia non crescerebbe mai. La forma chiusa
 \`e stata verificata contro la discretizzazione esatta di Van Loan: a
@@ -425,77 +408,42 @@ $T_s = 0.1$\,s l'errore relativo \`e di $4\cdot 10^{-4}$.
 
 \subsection{Controllo di formazione tramite consenso}
 
-La formazione \`e definita da un insieme di posizioni desiderate
-$p_i^{des} \in \mathbb{R}^2$ e dagli offset relativi
-$\Delta_{ij} = p_i^{des} - p_j^{des}$. La legge di controllo per il veicolo
-$i$ \`e:
+La formazione \`e definita da un insieme di posizioni desiderate $p_i^{des} \in \mathbb{R}^2$ e dai relativi offset $\Delta_{ij} = p_i^{des} - p_j^{des}$. La legge di controllo che governa la velocit\`a cartesiana $u_i \in \mathbb{R}^2$ comandata al veicolo $i$ \`e strutturata come un protocollo di consenso:
 
 \begin{equation}
-u_i = -K_{cons} \sum_{j \in \mathcal{N}_i} a_{ij}
-      \Big[(p_i - p_j) - \Delta_{ij}\Big]
+u_i = -K_{cons} \sum_{j \in \mathcal{N}_i} a_{ij} \Big[(p_i - p_j) - \Delta_{ij}\Big]
 \label{eq:consenso}
 \end{equation}
 
-dove $u_i \in \mathbb{R}^2$ \`e la velocit\`a cartesiana comandata al punto di
-controllo, $K_{cons} > 0$ il guadagno di consenso [1/s], $\mathcal{N}_i$
-l'insieme dei vicini in portata radio e $a_{ij}$ l'elemento di adiacenza.
+dove $K_{cons} > 0$ \`e il guadagno proporzionale [1/s], $\mathcal{N}_i$ \`e l'insieme dei vicini in portata radio e $a_{ij}$ \`e l'elemento della matrice di adiacenza. 
 
-Introducendo la variabile traslata $\tilde p_i = p_i - p_i^{des}$, l'errore
-diventa $\tilde p_i - \tilde p_j$ e la~\eqref{eq:consenso} si riscrive in
-forma matriciale come:
+\`E fondamentale notare che in questa legge si utilizzano i pesi di adiacenza $a_{ij}$ e \emph{non} i pesi di Metropolis $q_{ij}$. I due non sono tarature alternative dello stesso parametro. La legge di controllo agisce sull'errore relativo tra i veicoli: poich\'e opera su differenze, l'equilibrio della formazione \`e intrinsecamente garantito per qualsiasi set di pesi $a_{ij} \ge 0$. Non vi \`e alcuna necessit\`a di normalizzazione n\'e di definire un auto-peso $a_{ii}$. Al contrario, i pesi $q_{ij}$ nascono per costruire una matrice stocastica (con somma per riga pari a 1) per la stima distribuita, dove l'agente sostituisce la propria informazione con una vera e propria media. Usarli nel controllo significherebbe scartare l'auto-peso $q_{ii}$ --- distruggendo di fatto la stocasticit\`a --- e legare arbitrariamente il guadagno del controllore alla topologia locale della rete.
+
+Introducendo la variabile traslata $\tilde p_i = p_i - p_i^{des}$, l'errore diventa $\tilde p_i - \tilde p_j$ e l'equazione si riscrive in forma matriciale compatta come:
 
 \begin{equation}
 u = -K_{cons}\,(L \otimes I_2)\,\tilde p
 \label{eq:consenso_matriciale}
 \end{equation}
 
-cio\`e \emph{esattamente} il protocollo di consenso lineare del corso
-\cite{fontanelli_notes}, dove $\otimes$ \`e il prodotto di Kronecker e $I_2$
-la matrice identit\`a $2\times 2$. Il mantenimento della formazione non \`e
-quindi un problema distinto dal consenso: \`e consenso su coordinate traslate.
-Ne segue che l'intera teoria si applica senza adattamenti, e in particolare
-che l'errore di formazione decade con costante di tempo:
+cio\`e \emph{esattamente} il protocollo di consenso lineare del corso \cite{fontanelli_notes}, dove $\otimes$ \`e il prodotto di Kronecker e $I_2$ la matrice identit\`a $2\times 2$. Il mantenimento della formazione si riduce a un problema di consenso su coordinate traslate, il cui errore decade esponenzialmente con una costante di tempo:
 
 \begin{equation}
 \tau = \frac{1}{K_{cons}\,\lambda_2(L)}
 \label{eq:tau}
 \end{equation}
 
-dove $\lambda_2(L)$ \`e la connettivit\`a algebrica, cio\`e il secondo
-autovalore pi\`u piccolo del Laplaciano. La~\eqref{eq:tau} \`e stata usata
-come vincolo di progetto: passando dalla formazione a tre veicoli in grafo
-completo ($\lambda_2(L) = 3.000$) a quella a cinque veicoli con grafo sparso
-($\lambda_2(L) = 0.697$), a parit\`a di guadagno $\tau$ salirebbe da 2.22 a
-9.56\,s. Il guadagno \`e quindi stato ricalcolato per invertire la~\eqref{eq:tau}
-e tenere $\tau$ invariato, ottenendo $K_{cons} = 0.646$. \textbf{\`E il punto in
-cui $\lambda_2(L)$ smette di essere un indicatore e diventa un parametro di
-progetto.}
+dove $\lambda_2(L)$ \`e la connettivit\`a algebrica, ossia il secondo autovalore pi\`u piccolo del Laplaciano. Questa relazione \`e stata usata come vincolo di progetto per garantire reattivit\`a uniformi. Passando dalla formazione a tre veicoli con grafo completo ($\lambda_2(L) = 3.000$) a quella a cinque veicoli con grafo sparso ($\lambda_2(L) = 0.697$), a parit\`a di guadagno il tempo di assestamento $\tau$ salirebbe da 2.22\,s a 9.56\,s. Il guadagno $K_{cons}$ \`e stato quindi ricalcolato topologia per topologia al fine di mantenere $\tau$ invariato, ottenendo per il grafo finale il valore $K_{cons} = 0.646$.
 
-Va motivata una scelta che pu\`o sorprendere: nella~\eqref{eq:consenso} compare
-$a_{ij}$ e \emph{non} il peso di Metropolis $q_{ij}$. I due non sono tarature
-alternative dello stesso coefficiente. La legge di controllo genera una
-velocit\`a a partire da una \emph{differenza}, e per una differenza l'invarianza
-$L\mathbf{1} = 0$ vale per qualunque peso non negativo: non esiste alcun
-$a_{ii}$, non c'\`e nulla da normalizzare. Usare $q_{ij}$ significherebbe
-prendere il solo blocco fuori diagonale di $Q$, scartando proprio $q_{ii}$ che
-la rende stocastica, e legare il guadagno effettivo alla topologia. La $Q$ entra
-invece a pieno titolo nella stima distribuita, dove l'agente sostituisce
-davvero la propria informazione con una media dei vicini.
-
-Alla stabilit\`a in tempo continuo si aggiungono due vincoli discreti. Il primo
-\`e sulla discretizzazione, $K_{cons} T_s \lambda_{max}(L) < 2$, dove
-$\lambda_{max}(L)$ \`e il massimo autovalore del Laplaciano: al valore 2 il
-moltiplicatore vale esattamente $-1$ e il sistema oscilla senza smorzarsi. Nel
-progetto vale 0.278, ampiamente dentro. Il secondo \`e sul ritardo di
-comunicazione \cite{olfati2004}:
+Alla stabilit\`a in tempo continuo si aggiungono due vincoli per l'implementazione in tempo discreto. Il primo riguarda l'integrazione di Eulero: la matrice di transizione di stato diventa $Q_{disc} = I - K_{cons} T_s L$, i cui autovalori sono $\lambda_{i}(Q_{disc}) = 1 - K_{cons} T_s \lambda_{i}(L)$. Per garantire la stabilit\`a asintotica deve valere $-1 < \lambda_{i}(Q_{disc}) < 1$ per ogni $i$. I parametri del progetto risultano ampiamente all'interno del limite di stabilit\`a. 
+Il secondo vincolo riguarda il limite teorico di tolleranza al ritardo di comunicazione $\tau_d$ \cite{olfati2004}:
 
 \begin{equation}
 \tau_d < \frac{\pi}{2\,K_{cons}\,\lambda_{max}(L)}
 \label{eq:ritardo}
 \end{equation}
 
-dove $\tau_d$ \`e il ritardo con cui l'informazione dei vicini arriva. Per la
-topologia adottata il limite vale 565\,ms.
+Per la topologia adottata, il ritardo massimo tollerabile prima che il sistema perda stabilit\`a e inizi a oscillare vale 565\,ms (più di 5 cicli).
 
 \subsection{Evitamento delle collisioni}
 
@@ -515,16 +463,13 @@ u_i^{rep} = \sum_{j \neq i} k_{rep}
 \label{eq:firas}
 \end{equation}
 
-dove $k_{rep}$ \`e il guadagno repulsivo. Quest'ultimo non \`e stato fissato a
-un numero ma ricavato invertendo un requisito di progetto (``a met\`a della
-distanza di sicurezza la repulsione deve valere 3\,m/s''), perch\'e il
-gradiente scala come $1/d^3$ e un guadagno tarato a una scala non \`e
-trasferibile a un'altra.
+dove $k_{rep}$ \`e il guadagno repulsivo ricavato invertendo un requisito di progetto che prevede che a met\`a della
+distanza di sicurezza la repulsione deve valere 3\,m/s.
 
-Un vincolo lega i due termini: deve valere
+Deve valere
 $d_{safe} < \min_{i \neq j}\lVert\Delta_{ij}\rVert$, altrimenti la repulsione
 non si annullerebbe mai nella configurazione desiderata e la formazione
-risulterebbe irraggiungibile. Un secondo vincolo, $d_{safe} < r_{collab}$, \`e
+risulterebbe irraggiungibile. Inoltre, $d_{safe} < r_{collab}$, \`e
 imposto da un \texttt{assert} in inizializzazione: la repulsione richiede la
 \emph{direzione} verso il vicino e non la sola distanza, e la direzione arriva
 solo dal pacchetto radio.
@@ -534,9 +479,8 @@ solo dal pacchetto radio.
 Accanto alla stima della posa, che \`e dinamica e locale a ciascun mezzo, la
 flotta risolve un secondo problema di natura diversa: identificare la coppia
 $x_{terr} = [\mu_{terr},\ c_{terr}]^T$ della~\eqref{eq:traz}, uguale per tutti
-e costante nel tempo. Trattandosi di un parametro costante e non stocastico,
-il caso corretto \`e quello dei \emph{minimi quadrati pesati distribuiti}
-(D-WLS) \cite{fontanelli_notes}; un filtro di Kalman distribuito servirebbe
+e costante nel tempo. Trattandosi di un parametro costante e non stocastico, la soluzione applicata \`e quella dei \emph{minimi quadrati pesati distribuiti}
+(D-WLS) \cite{fontanelli_notes} siccome un filtro di Kalman distribuito servirebbe
 solo se la grandezza avesse una dinamica propria.
 
 Poich\'e i rumori dei diversi veicoli sono scorrelati, la matrice $R$ globale
@@ -586,17 +530,15 @@ con i pesi~\eqref{eq:metropolis}, e la stima viene ricostruita localmente:
 \end{algorithmic}
 \end{algorithm}
 
-Tre osservazioni rendono questo schema interessante, e sono riassunte
-nell'Alg.~\ref{alg:dwls}.
+Tre osservazioni, riassunte nell'Alg.~\ref{alg:dwls}.
 
 \textbf{Nessun veicolo pu\`o risolvere il problema da solo.} I parametri sono
 due e ogni mezzo produce una misura scalare per passo, quindi la sua $F_i$
 istantanea \`e un prodotto esterno di \emph{rango 1 su 2}: il problema locale
-\`e singolare, non semplicemente impreciso. Diventa risolvibile solo unendo
+\`e singolare. Diventa risolvibile solo unendo
 misure prese a velocit\`a diverse, fornite dalla formazione --- su percorso
 curvo le ali della V percorrono archi di raggio diverso dal Master --- e
-dall'accumulo lungo la missione. \`E lo stesso meccanismo della GDOP: conta la
-diversit\`a geometrica delle misure, non il loro numero.
+dall'accumulo lungo la missione.
 
 \textbf{Il fattore $1/N$ si cancella nella stima ma non nella covarianza.} A
 convergenza il nodo possiede $F_i(q) = \frac{1}{N}\sum_l F_l$, e nel rapporto
@@ -630,7 +572,7 @@ Il lavoro \`e stato organizzato dividendolo in fasi successive, ciascuna delle
 quali rimuove una singola ipotesi semplificativa e viene validata prima di
 passare alla successiva. La scelta ha permesso di attribuire ogni variazione
 dei risultati a una causa precisa, invece di dover diagnosticare un sistema
-completo che non funziona. Le fasi sono riassunte in Tab.~\ref{tab:fasi}: il
+completo che non funziona come ci si aspettava. Le fasi sono riassunte in Tab.~\ref{tab:fasi}: il
 punto di arrivo di questo lavoro, e l'oggetto dei risultati della sezione
 seguente, \`e la Fase 4.
 
@@ -651,14 +593,7 @@ un'ipotesi ideale e viene validata separatamente.}
 \end{tabular}
 \end{table}
 
-Ogni fase \`e implementata in uno script MATLAB autonomo, che condivide con le
-altre un insieme di funzioni comuni (costruzione del grafo, pesi di Metropolis,
-rumore CWNA, consenso D-WLS) e i rispettivi script di validazione. Le propriet\`a
-algebriche non vengono date per buone: l'invarianza $L\mathbf{1} = 0$,
-$\lambda_2(L) = n$ sul grafo completo $K_n$, la doppia stocasticit\`a di $Q$ e
-la predittivit\`a di $\rho_2$ sono verificate numericamente su topologie note,
-e l'equivalenza fra la~\eqref{eq:consenso} e la~\eqref{eq:consenso_matriciale}
-\`e verificata a precisione di macchina ($6.7\cdot10^{-16}$\,m/s di scarto).
+Ogni fase \`e implementata in uno script MATLAB autonomo, che condivide con le altre un insieme di funzioni comuni (costruzione del grafo, pesi di Metropolis, rumore CWNA, consenso D-WLS). 
 
 \subsection{Ciclo di simulazione e convenzione temporale}
 
@@ -670,7 +605,7 @@ applicato nell'intervallo $[t_k, t_{k+1})$. Ogni iterazione esegue cinque
 blocchi in quest'ordine:
 
 \begin{enumerate}
-\item \textbf{Broadcast} --- ogni agente pubblica la propria stima sulla rete;
+\item \textbf{Broadcast} --- ogni agente pubblica la propria stima dello stato sulla rete;
 \item \textbf{Controllo} --- $u_k$ calcolato dalla sola $\hat x_k$;
 \item \textbf{Impianto} --- avanzamento della \emph{ground truth} per tutti;
 \item \textbf{Sensori} --- generazione di $z_{k+1}$ dalla ground truth a $t_{k+1}$;
@@ -711,15 +646,11 @@ dove $d$ \`e il ritardo estratto per quel pacchetto. Il $\max$ esterno impedisce
 che un pacchetto tardivo sostituisca un dato pi\`u recente gi\`a ricevuto; su
 un pacchetto perso l'indice non avanza e il dato invecchia da solo.
 
-Non serve alcun \emph{timestamping} con reinserimento retroattivo nel buffer
-del filtro, e non \`e una scorciatoia: vanno distinti due tipi di ritardo. Nella
-\emph{posa dell'ancora vecchia} la misura di distanza la fa la propria radio
-adesso ed \`e fresca --- stale \`e solo la posizione del vicino usata per
-predirla, e si rimedia propagandola in avanti col modello di moto per tutta la
-sua et\`a. Nella \emph{misura fuori sequenza}, invece, \`e una misura del proprio
-stato a essere stata presa nel passato, e l\`a servirebbe tornare indietro nel
-buffer. Il progetto ha solo il primo caso, perch\'e nessun veicolo trasmette
-misure altrui.
+Nel progetto si adottano due possibili reazioni al ritardo: 
+\begin{enumerate}
+\item gestione \textbf{passiva}: uso il pacchetto vecchio senza applicare correzioni. Uso questa modalità con il consenso di formazione, accettando il ritardo (che si limita al massimo a 200 ms) 
+\item gestione \textbf{attiva}: propago in avanti la posizione del veicolo con il modello di moto passato. Uso questa modalità con le ancore mobili UWB, stimando quindi la posizione del vicino sulla base del suo modello di moto passato.
+\end{enumerate}
 
 %=========================================================================
 \section{Risultati}
@@ -785,15 +716,7 @@ cio\`e il 98\% della banda allocata. Il consenso passa da voce marginale a
 vincolo di progetto, e la scelta del raggio radio diventa un compromesso fra
 qualit\`a del collegamento e costo della comunicazione.
 
-La previsione \`e conservativa: nei fatti ne bastano 34, perch\'e $\rho_2$
-governa il decadimento \emph{asintotico} e trascura la costante moltiplicativa.
-Sovrastimare \`e il verso giusto in cui sbagliare, ma qui lo si paga in banda.
-
-La Fig.~\ref{fig:grafo} mostra che la topologia resta deterministica per
-l'intera missione. Le distanze nominali si separano in due gruppi netti,
-36--41\,m e 66--81\,m, con un vuoto di 25\,m in mezzo: il margine \`e del
-$+35\%$ sui collegamenti attivi e del $-17\%$ su quelli assenti, quindi
-l'errore di formazione non li fa sfarfallare.
+La Fig.~\ref{fig:grafo} mostra che la topologia resta deterministica per l'intera missione. Le distanze nominali si separano in due gruppi netti, 36--41\,m e 66--81\,m, con un vuoto di 25\,m in mezzo: il margine \`e del $+35\%$ sui collegamenti attivi e del $-17\%$ su quelli assenti, quindi l'errore di formazione non li fa sfarfallare.
 
 \begin{figure*}[t]
 \centering
@@ -927,9 +850,7 @@ Il consenso \`e una forza \emph{interna} e non pu\`o spostare il baricentro:
 l'unica spinta esterna viene dal Master e si divide fra tutti. La verifica \`e
 esatta: $2.5/3 = 0.83$\,m/s con tre mezzi (misurato 0.83), $2.5/5 = 0.50$ con
 cinque (misurato 0.50). Aggiungere veicoli a una formazione del primo ordine
-guidata da un Master la rallenta quindi in proporzione diretta. La correzione
-\`e di una riga --- propagare $V_{rif}$ a tutta la flotta in avanti --- ed \`e
-riportata fra gli sviluppi futuri.
+guidata da un Master la rallenta quindi in proporzione diretta. La soluzione \`e di propagare $V_{rif}$ a tutta la flotta, come riportato fra gli sviluppi futuri.
 
 \subsection{Stima distribuita del parametro di terreno}
 
@@ -988,7 +909,7 @@ V5 (ala esterna) & $6.33\cdot10^{-3}$ & $4.47\cdot10^{-4}$ & \textbf{14.2$\times
 \end{table}
 
 La Tab.~\ref{tab:dwls_gain} quantifica quanto vale la cooperazione. Il confronto
-corretto non \`e il numero di condizionamento --- aggiungere Slave lo peggiora
+corretto non \`e il numero di condizionamento (rapporto tra il suo autovalore massimo e il suo autovalore minimo) --- aggiungere Slave lo peggiora
 leggermente, pur aggiungendo informazione --- ma la covarianza
 $(\sum_i F_i)^{-1}$, che per l'ordinamento di Loewner pu\`o solo ridursi.
 
@@ -1114,12 +1035,8 @@ doverla conoscere:
 \label{eq:ci}
 \end{equation}
 dove $\gamma \in [0,1]$ \`e scelto minimizzando una misura della dimensione di
-$\Sigma$. La CI classica non si applica per\`o direttamente al caso in esame:
-fonde due stime della \emph{stessa} grandezza, mentre qui il vicino trasmette
-una stima del \emph{proprio} stato, e da una misura di sola distanza non si
-ricava una stima puntuale della propria posizione. La formulazione corretta
-\`e quella di Carrillo-Arce \emph{et al.} \cite{carrillo2013}, in cui
-l'incertezza del vicino entra proiettata sulla direzione della congiungente.
+$\Sigma$. 
+
 Va sottolineato che l'intervento richiede anche di estendere il pacchetto
 scambiato dalla sola posizione alla coppia
 $(\hat p_j, \Sigma_j^{(1:2,1:2)})$, e che le due modifiche vanno introdotte
