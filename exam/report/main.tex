@@ -210,7 +210,9 @@ per la misura di distanza e di un torsiometro sull'albero di trasmissione.
 Le equazioni di misura sono le seguenti.
 
 \emph{AHRS}: fornisce direttamente imbardata e velocit\`a angolare,
-$z^{ahrs} = [\theta,\ \omega]^T + \delta^{ahrs}$.
+\begin{equation}
+z^{ahrs} = [\theta,\ \omega]^T + \delta^{ahrs}
+\end{equation}
 
 \emph{Velocit\`a dei cingoli}: il sensore a effetto Hall sul pignone conta
 gli impulsi e fornisce la velocit\`a angolare dei due cingoli,
@@ -228,7 +230,10 @@ carreggiata, cio\`e l'interasse fra i due cingoli. La~\eqref{eq:enc}
 presuppone rotolamento puro, ipotesi che verr\`a rimossa negli sviluppi futuri.
 
 \emph{GNSS}: misura diretta di posizione assoluta, disponibile solo fuori dalle
-zone cieche, $z^{gnss} = [x,\ y]^T + \delta^{gnss}$.
+zone cieche, 
+\begin{equation}
+z^{gnss} = [x,\ y]^T + \delta^{gnss}
+\end{equation}
 
 \emph{Ranging UWB}: distanza da un'ancora fissa di posizione nota
 $p^{anc} = [X^{anc}, Y^{anc}]^T$, oppure da un veicolo vicino,
@@ -284,7 +289,7 @@ cooperazione. La seconda asimmetria \`e fra ranging verso ancora fissa
 veicolo \`e pi\`u bassa e l'effetto della piattaforma metallica \`e presente su
 \emph{entrambi} i capi del collegamento anzich\'e su uno solo. La stessa fisica
 implica anche una \emph{portata inferiore}, ed \`e la ragione per cui il raggio
-inter-veicolare \`e minore di quello verso le ancore.
+inter-veicolare $r_{collab}$ \`e minore di quello verso le ancore $r_{uwb}$.
 
 \subsection{Rete di comunicazione e grafo}
 \label{sub:grafo}
@@ -348,11 +353,11 @@ una rete ben collegata ha $\lambda_2(L)$ grande e $\rho_2$ piccolo.}
 \toprule
  & \textbf{Laplaciano $L$} & \textbf{Metropolis $Q$}\\
 \midrule
-Usata per      & controllo formazione & stima distribuita\\
+Utilizzo      & controllo formazione & stima distribuita\\
 Tempo          & continuo             & discreto\\
-Ordinamento    & crescente            & modulo decrescente\\
-Autovalore fisso & $\lambda_1(L)=0$   & $\lambda_1(Q)=1$\\
-Molteplicit\`a & \multicolumn{2}{c}{numero di componenti connesse}\\
+Ordinamento $\lambda_i$    & crescente            & modulo decrescente\\
+Cond. Equilibrio & $\lambda_1(L)=0$   & $\lambda_1(Q)=1$\\
+\# compon. connesse & $mol(\lambda_1(L))$   & $mol(\lambda_1(Q))$\\
 Indicatore     & $\lambda_2(L)$: connettivit\`a & $\rho_2=|\lambda_2(Q)|$: velocit\`a\\
 \bottomrule
 \end{tabular}
@@ -731,7 +736,7 @@ della Fig.~\ref{fig:covarianza}. La matrice $C_{geom}$ della~\eqref{eq:gdop} \em
 $C_k$ dell'EKF: la GDOP \`e una misura del condizionamento dello stesso problema di stima che il
 filtro dovr\`a risolvere in quel punto.
 
-L'ottimizzazione \`e affidata a Nelder-Mead, con il vincolo di installabilit\`a
+L'ottimizzazione \`e affidata a Nelder-Mead (tramite la funzione \texttt{fminsearch}), con il vincolo di installabilit\`a
 dentro la mappa imposto come penalit\`a additiva. Con cinque ancore lo spazio di
 ricerca ha dieci dimensioni, al limite di affidabilit\`a del metodo: il
 risultato \`e un minimo locale, non l'ottimo globale.
@@ -878,10 +883,28 @@ cio\`e il 98\% della banda allocata. Il consenso passa da voce marginale a
 vincolo di progetto, e la scelta del raggio radio diventa un compromesso fra
 qualit\`a del collegamento e costo della comunicazione.
 
-La topologia resta deterministica per l'intera missione: le distanze nominali si separano in due gruppi netti,
+La topologia resta deterministica per l'intera missione, come mostra la
+Fig.~\ref{fig:grafo}: le distanze nominali si separano in due gruppi netti,
 36--41\,m e 66--81\,m, con un vuoto di 25\,m in mezzo: il margine \`e del
 $+34\%$ sui collegamenti attivi e del $-16\%$ su quelli assenti, quindi
 l'errore di formazione non li fa sfarfallare.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.74\textwidth]{figure/7_grafo_comunicazione.png}
+\caption{Diagnostica del grafo di comunicazione. In alto la connettivit\`a
+algebrica $\lambda_2(L)$ e il numero di archi attivi; al centro lo spettro
+$\lambda_i(Q)$ della matrice di Metropolis; in basso le dieci distanze
+inter-veicolari confrontate con il raggio radio (tratteggio nero). Le cinque
+curve continue restano ben sotto la soglia, le cinque punteggiate ben sopra:
+\`e il vuoto fra i due gruppi che rende la topologia stabile malgrado l'errore
+di formazione. La figura viene da una singola esecuzione, ma \`e rappresentativa
+di tutte: nella campagna Monte Carlo queste grandezze non variano affatto
+($\lambda_2(L) = 0.6972 \pm 0.0000$, $\rho_2 = 0.8257 \pm 0.0000$, archi attivi
+$5.00 \pm 0.00$), perch\'e dipendono dalla geometria della formazione e non dal
+rumore.}
+\label{fig:grafo}
+\end{figure*}
 
 \subsection{Accuratezza della localizzazione}
 
@@ -890,8 +913,7 @@ Sulla missione completa la copertura satellitare si distribuisce cos\`i: nel
 \textbf{37.8\%} la copertura \`e \emph{mista} (almeno un veicolo coperto e
 almeno uno al buio) e nel \textbf{9.4\%} nessun veicolo ha copertura. Le tre
 percentuali variano di appena un decimo di punto fra le ripetizioni, perch\'e
-dipendono dalla mappa e non dal rumore. La fascia centrale \`e quella per cui il
-progetto esiste, perch\'e \`e l\`i che un mezzo cieco pu\`o ancorarsi a un vicino
+dipendono dalla mappa e non dal rumore. La fascia centrale \`e quella più rilevante, perch\'e \`e l\`i che un mezzo cieco pu\`o ancorarsi a un vicino
 che vede ancora i satelliti, e vale oltre un terzo della missione solo grazie
 alla scala della formazione: profonda 60\,m contro i 45--85\,m di raggio delle
 zone d'ombra. Con una formazione larga pochi metri i cinque mezzi
@@ -1056,7 +1078,8 @@ V5 (ala esterna) & $6.17\cdot10^{-3}$ & $\mathbf{8.2 \pm 2.3\times}$ & $0.024 \p
 \end{table}
 
 La Tab.~\ref{tab:dwls_gain} quantifica quanto vale la cooperazione. Il
-confronto corretto non \`e il numero di condizionamento, che peggiora
+confronto corretto non \`e il numero di condizionamento (il rapporto fra l'autovalore
+massimo e quello minimo), che peggiora
 leggermente aggiungendo Slave pur in presenza di maggiore informazione, ma la
 covarianza $(\sum_i F_i)^{-1}$, che per l'ordinamento di Loewner pu\`o solo
 ridursi. L'ultima colonna spiega la terza: il guadagno di ciascun mezzo \`e
@@ -1066,23 +1089,19 @@ arriverebbe gi\`a dove arriva la rete. \textbf{La rete non migliora tutti allo
 stesso modo: distribuisce a tutti la qualit\`a del membro meglio strumentato},
 la stessa struttura del GNSS RTK montato sul solo Master.
 
-\`E qui che la campagna cambia il quadro rispetto a una singola esecuzione. La
+La
 stima finale vale $\mu_{terr} = 0.09010 \pm 0.00018$ e
 $c_{terr} = 0.00457 \pm 0.00081$, contro valori veri di 0.0900 e 0.00500, con un
 errore relativo sul vettore dei parametri,
 $\lVert \hat x_{terr} - x_{terr}\rVert / \lVert x_{terr} \rVert$, pari allo
 $\mathbf{0.81 \pm 0.65\%}$. I due parametri non sono per\`o identificati allo
 stesso modo: preso da solo, $\mu_{terr}$ ha un errore dello $0.17 \pm 0.15\%$,
-mentre $c_{terr}$ arriva al $\mathbf{14.2 \pm 11.6\%}$. Su una singola
-esecuzione si potrebbe leggere un errore del 2\% come dell'oltre 50\%, e
-nessuna delle due letture sarebbe rappresentativa.
+mentre $c_{terr}$ arriva al $\mathbf{14.2 \pm 11.6\%}$.
 
 \textbf{La covarianza dichiarata dal D-WLS \`e per\`o corretta.} L'incertezza che
 l'algoritmo dichiara su $c_{terr}$, $8.04\cdot10^{-4}$, coincide con la
 dispersione effettivamente osservata fra le 50 ripetizioni,
-$8.14\cdot10^{-4}$: il rapporto vale \textbf{1.01}. Lo stimatore non \`e preciso
-quanto una singola esecuzione fortunata suggerirebbe, ma sa esattamente quanto
-non lo \`e, ed \`e la propriet\`a che conta per chi deve usarne l'uscita.
+$8.14\cdot10^{-4}$: il rapporto vale \textbf{1.01}.
 
 Le stime dei cinque veicoli restano fra loro indistinguibili a ogni round,
 come impone il consenso.
@@ -1209,8 +1228,7 @@ frequenze reali e canale con ritardo e perdite.
       dalle fluttuazioni del rumore.} Localizzazione, canale e grafo si
       confermano stabili a meno di pochi punti percentuali, mentre la stima del
       parametro di terreno si rivela molto pi\`u dispersa di quanto una singola
-      esecuzione lasciasse credere. Senza la campagna, quel risultato sarebbe
-      stato riportato con una precisione che non possiede.
+      esecuzione lasciasse credere.
 \end{itemize}
 
 \subsection{Limiti noti e possibili soluzioni}
@@ -1262,9 +1280,8 @@ doverla conoscere:
 dove $\bar\Sigma$ \`e la covarianza a priori del veicolo e $\gamma \in [0,1]$
 \`e scelto minimizzando una misura della dimensione di $\Sigma$. La CI classica
 fonde per\`o due stime della \emph{stessa} grandezza, mentre qui il vicino
-trasmette una stima del \emph{proprio} stato: la formulazione corretta \`e quella
-di Carrillo-Arce \emph{et al.}~\cite{carrillo2013}, in cui l'incertezza del
-vicino entra proiettata sulla congiungente. L'intervento richiede anche di
+trasmette una stima del \emph{proprio} stato.
+L'intervento richiede anche di
 estendere il pacchetto scambiato dalla sola posizione alla coppia
 $(\hat p_j, \Sigma_j)$, e le due modifiche vanno introdotte \emph{insieme}:
 usare $\Sigma_j$ per gonfiare $R$ lasciando il guadagno di Kalman standard
@@ -1332,12 +1349,6 @@ robots,'' \emph{Int. J. of Robotics Research}, vol.~5, no.~1, pp.~90--98, 1986.
 S.~J.~Julier and J.~K.~Uhlmann, ``A non-divergent estimation algorithm in the
 presence of unknown correlations,'' in \emph{Proc. American Control
 Conference}, Albuquerque, NM, 1997, pp.~2369--2373.
-
-\bibitem{carrillo2013}
-L.~C.~Carrillo-Arce, E.~D.~Nerurkar, J.~L.~Gordillo, and S.~I.~Roumeliotis,
-``Decentralized multi-robot cooperative localization using covariance
-intersection,'' in \emph{Proc. IEEE/RSJ Int. Conf. on Intelligent Robots and
-Systems (IROS)}, Tokyo, Japan, 2013, pp.~1412--1417.
 
 \bibitem{fontanelli2016}
 D.~Fontanelli, D.~Macii, P.~Nazemzadeh, and L.~Palopoli, ``Collaborative
