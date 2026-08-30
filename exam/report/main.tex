@@ -82,7 +82,7 @@ e perdita di pacchetti. I risultati sono ottenuti da una campagna Monte Carlo
 di 50 ripetizioni, e riportati come media e deviazione standard.
 I risultati mostrano che in zona cieca la flotta riduce la traccia della
 covarianza di posizione di un fattore 27 rispetto alla navigazione a cielo
-aperto con GNSS di serie, e che la cooperazione migliora fino a 15 volte
+aperto con GNSS di serie, e che la cooperazione migliora fino a 8 volte
 l'incertezza sul parametro di terreno dei veicoli meno strumentati.
 \end{abstract}
 
@@ -285,11 +285,11 @@ veicolo capofila si attribuisce un ricevitore RTK e un torsiometro di qualit\`a
 superiore. \`E una scelta di progetto che rende osservabile quanto \`e
 informativo sulla rete un veicolo con equipaggiamento migliore durante la
 cooperazione. La seconda asimmetria \`e fra ranging verso ancora fissa
-($\sigma = 0.5$\,m) e ranging fra veicoli ($\sigma = 0.6$\,m): l'antenna del
+($\sigma_{uwb} = 0.5$\,m) e ranging fra veicoli ($\sigma_{collab} = 0.6$\,m): l'antenna del
 veicolo \`e pi\`u bassa e l'effetto della piattaforma metallica \`e presente su
 \emph{entrambi} i capi del collegamento anzich\'e su uno solo. La stessa fisica
 implica anche una \emph{portata inferiore}, ed \`e la ragione per cui il raggio
-inter-veicolare $r_{collab}$ \`e minore di quello verso le ancore $r_{uwb}$.
+inter-veicolare $r_{collab}$ \`e minore di quello verso le ancore $r_{ancora}$.
 
 \subsection{Rete di comunicazione e grafo}
 \label{sub:grafo}
@@ -947,7 +947,7 @@ V5 (Slave)        & $0.361 \pm 0.030$ & $0.079 \pm 0.003$ & 0.0143 m$^2$\\
 \textbf{Gli Slave stimano 4.3 volte meglio in zona GPS-denied che a cielo
 aperto}. Non \`e un paradosso ma la conseguenza diretta del confronto fra due fonti di informazione: un ricevitore
 NEO-M8N a $\sigma = 2.0$\,m che produce un fix ogni secondo, contro almeno tre
-ancore UWB a $\sigma = 0.5$\,m interrogate a 10\,Hz e geometricamente ben
+ancore UWB a $\sigma_{uwb} = 0.5$\,m interrogate a 10\,Hz e geometricamente ben
 distribuite. Fra un fix GNSS e l'altro lo Slave passa il 90\% dei passi in sola
 predizione, sostenuto da AHRS ed encoder, e l'incertezza cresce.
 
@@ -1107,7 +1107,7 @@ Le stime dei cinque veicoli restano fra loro indistinguibili a ogni round,
 come impone il consenso.
 
 Il miglioramento rispetto alla formazione a tre veicoli, con errore relativo
-che passa dall'1.53\% allo 0.31\%, non viene dall'andare pi\`u veloci: la flotta
+che passa dall'1.53\% allo 0.81\%, non viene dall'andare pi\`u veloci: la flotta
 a cinque \`e anzi pi\`u lenta per la~\eqref{eq:velflotta}. Viene dall'andare a
 velocit\`a \emph{pi\`u diverse}.
 Le ali esterne stanno a 40\,m dall'asse contro i 20\,m delle interne, quindi in
@@ -1165,7 +1165,7 @@ dall'inviluppo $\pm 3\sigma$ sono lo 0.09\% contro lo 0.27\% atteso.
 ripetizioni. Il grado \`e il numero di vicini in portata radio, e quindi il
 numero di misure collaborative che il veicolo fonde in zona cieca.}
 \label{tab:nees}
-\begin{tabular}{lccccc}
+\begin{tabular}{lcccc}
 \toprule
 \textbf{Veicolo} & \textbf{grado} & \textbf{con GNSS} & \textbf{in zona cieca} &
 $\mathbf{\Delta}$\\
@@ -1182,7 +1182,7 @@ V2 (ala interna) & 3 & $1.24 \pm 0.32$ & $\mathbf{2.18 \pm 0.45}$ & $\mathbf{+0.
 \textbf{Separare le due condizioni di copertura rende visibile il limite
 dichiarato in Sez.~\ref{sec:conclusioni}.} La Tab.~\ref{tab:nees} riporta il
 NEES a cielo aperto e in zona cieca: la media sulla flotta passa da 1.35 a 1.77,
-e l'aumento \`e ordinato secondo il \textbf{grado del nodo}. Le due ali esterne,
+e l'aumento \`e ordinato anche in relazione al \textbf{grado del nodo}. Le due ali esterne,
 che hanno un solo vicino, si spostano di appena $+0.11$ e $+0.12$; il Master,
 con due vicini, di $+0.49$; V2, che ne ha tre, di $+0.94$, superando il valore
 atteso di 2.
@@ -1212,7 +1212,7 @@ frequenze reali e canale con ritardo e perdite.
 \begin{itemize}
 \item \textbf{L'infrastruttura UWB compensa pi\`u che sostituire il GNSS.} In
       zona cieca la traccia della covarianza scende di un fattore 27: cinque
-      ancore a $\sigma = 0.5$\,m battono un ricevitore a $\sigma = 2.0$\,m e
+      ancore a $\sigma_{uwb} = 0.5$\,m battono un ricevitore a $\sigma = 2.0$\,m e
       1\,Hz.
 \item \textbf{La cooperazione rende risolvibile un problema localmente
       singolare.} Nessun veicolo identifica i due parametri di terreno da solo,
