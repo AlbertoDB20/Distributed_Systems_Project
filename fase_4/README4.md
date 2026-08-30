@@ -357,3 +357,105 @@ L'ultima colonna spiega la terza: il guadagno di ciascun mezzo è tanto maggiore
 **Limite residuo: il regressore incerto.** La riga $C_i = [1,\ v_i^2]$ usa la velocità *stimata*, l'unica disponibile a bordo, e un regressore rumoroso attenua la pendenza verso lo zero. Rifacendo il calcolo con la velocità vera si ottiene $c_{terr} = 0.005015$, cioè $+0.03$ deviazioni: quasi esatto. L'effetto non è sparito, è diventato piccolo rispetto all'informazione ora disponibile, e tornerà a contare in Fase 5 quando lo slittamento renderà il comando diverso dalla velocità effettiva. La covarianza dichiarata non lo modella e risulta quindi ottimista, come già la misura collaborativa che ignora $\Sigma_j$ (§3.3).
 
 > Trattazione completa e validazione algoritmica su topologie note (`common/verifica_dwls.m`): [TEORIA_stima_distribuita.md](../theory/TEORIA_stima_distribuita.md).
+
+---
+
+## 5. Validazione Monte Carlo
+
+Tutti i numeri delle sezioni precedenti vengono da una singola esecuzione. Un
+run solo non permette di distinguere una proprietà del sistema da una
+fluttuazione del rumore, e per la stima del terreno la differenza si è rivelata
+sostanziale. `montecarlo4.m` ripete la stessa configurazione **50 volte**
+cambiando solo il seme, fissato al numero della ripetizione perché la campagna
+sia riproducibile.
+
+### 5.1 Come è costruita
+
+La campagna **non duplica il codice di simulazione**: lancia `main4.m` in
+modalità batch. MATLAB esegue gli script nel workspace del chiamante, quindi
+tutte le variabili di `main4` restano leggibili al termine di ogni ripetizione.
+La sorgente
+della simulazione resta una sola, e la campagna non può divergere dal codice che
+produce le figure.
+
+Un run in batch dura circa 26 s, la campagna completa 23 minuti. I dati
+finiscono in `montecarlo_fase4.mat` con struttura per-run, aggregati e
+metadati: è il riferimento con cui confrontare la Fase 5.
+
+### 5.2 Che cosa la campagna conferma
+
+| Grandezza | Valore |
+|---|---|
+| MAE in zona cieca | 0.078–0.088 m, dispersione ±0.005 |
+| MAE a cielo aperto, Slave | 0.350–0.364 m, dispersione ±0.035 |
+| Rapporto fra le due condizioni | **4.3×** |
+| Copertura tutti / mista / nessuno | 52.9% / 37.8% / 9.4%, ±0.1 |
+| Pacchetti persi | 0.50% ± 0.01 |
+| Età media / massima per run | 100 ± 0 ms / 334 ± 48 ms |
+| $\lambda_2(L)$, $\rho_2$, archi, diametro | invarianti fra i run |
+| Durata della missione | 1218.0 ± 0.2 s |
+
+Localizzazione, canale e grafo sono stabili: le dispersioni sono di pochi punti
+percentuali, e le grandezze spettrali non variano affatto perché la topologia è
+deterministica. I risultati riportati al §1.6 reggono.
+
+### 5.3 Che cosa la campagna corregge
+
+**La stima del parametro di terreno era riportata con una precisione che non
+possiede.**
+
+| | Singolo run (§4.6) | 50 ripetizioni |
+|---|---|---|
+| $c_{terr}$ | 0.00480 | **0.00457 ± 0.00081** |
+| Errore su $c_{terr}$ | −0.44 dev | **14.2% ± 11.6** |
+| Errore relativo sul vettore | 0.31% | **0.81% ± 0.65** |
+| dev($c_{terr}$) in rete | $4.47\cdot10^{-4}$ | $8.04\cdot10^{-4}$ |
+| Guadagno cooperazione (ali esterne) | 15.1× e 14.2× | **8.3× e 8.2×** |
+| Condizionamento di rete | 42 | **148 ± 75** (da 34 a 373) |
+
+La causa è identificata: la riga di regressione è $[1,\ v^2]$, e
+l'identificabilità di $c_{terr}$ dipende da quanto il Master esplora velocità
+diverse. La dispersione di $v^2$ del Master vale $0.108 \pm 0.039$ e varia di un
+fattore quattro fra le ripetizioni (da 0.052 a 0.223); l'esecuzione da cui
+venivano i numeri del §4.6 stava all'estremo superiore. La correlazione fra
+std($v^2$) del Master e l'errore su $c_{terr}$ vale **−0.39**.
+
+**La covarianza dichiarata dal D-WLS è però corretta.** L'incertezza che
+l'algoritmo dichiara su $c_{terr}$, $8.04\cdot10^{-4}$, coincide con la
+dispersione osservata fra le 50 ripetizioni, $8.14\cdot10^{-4}$: rapporto
+**1.01**. Lo stimatore non è preciso quanto una singola esecuzione fortunata
+suggeriva, ma sa esattamente quanto non lo è.
+
+Si conferma anche l'attenuazione da regressore incerto già segnalata al §4.6: la
+media delle 50 stime, 0.00457, sta sotto il valore vero di 0.00500 dell'8.6%,
+coerente in segno con l'*errors-in-variables*.
+
+### 5.4 Consistenza in senso statistico
+
+Con $M$ ripetizioni indipendenti il NEES di posizione soddisfa
+$M\bar\epsilon \sim \chi^2(2M)$; per $M = 50$ la banda di accettazione al 95% è
+$[1.48,\ 2.59]$. I quantili sono calcolati con l'approssimazione di
+Wilson–Hilferty per non dipendere dallo Statistics Toolbox.
+
+| Veicolo | NEES | Esito |
+|---|---|---|
+| V1 (Master) | 1.47 ± 0.13 | conservativo |
+| V2 | 1.55 ± 0.26 | entro banda |
+| V3 | 1.47 ± 0.36 | conservativo |
+| V4 | 1.46 ± 0.32 | conservativo |
+| V5 | 1.36 ± 0.33 | conservativo |
+
+Quattro veicoli su cinque cadono sotto l'estremo inferiore: il filtro è
+**consistente e significativamente conservativo**. È il verso corretto, ed è
+anche quello atteso, perché il rumore di processo è stato tarato su valori
+deliberatamente prudenti dato che l'impianto simulato ha aderenza ideale
+(README.md §2.5). La campagna misura quella scelta invece di limitarsi a
+dichiararla. Coerentemente, i campioni fuori dall'inviluppo ±3σ sono lo 0.09%
+contro lo 0.27% atteso.
+
+### 5.5 Figure prodotte
+
+| File | Contenuto |
+|---|---|
+| `9_montecarlo_convergenza.png` | tr(Σ_pos), errore di posizione ed errore del D-WLS mediati sulle ripetizioni, su asse di tempo normalizzato, con banda a 1σ |
+| `10_montecarlo_consistenza.png` | NEES mediato con banda al 95%; distribuzione delle 50 stime di $c_{terr}$; dispersione di $v^2$ del Master contro errore commesso |

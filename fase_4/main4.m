@@ -3,7 +3,14 @@
 %
 % Flotta di N = 5 battipista, non più tutti interconnessi vicendevolmente (r_collab = 55m). I sensori ora operano a frequenze reali con paramentri reali e il canale di comunicazione introduce latenze. Documentazione: README4.md.
 % =========================================================================
-clear; clc; close all;
+% MODALITA' BATCH
+% montecarlo4.m definisce MODO_BATCH = true prima di lanciare questo script,
+% per rieseguire la simulazione senza figure e senza azzerare il workspace del
+% chiamante. Lanciato normalmente lo script si comporta come sempre.
+if ~exist('MODO_BATCH', 'var'), MODO_BATCH = false; end
+if ~MODO_BATCH
+    clearvars -except MODO_BATCH; clc; close all;
+end
 
 addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'common'));
 
@@ -764,8 +771,11 @@ end
 disp('Simulazione completata.');
 
 %% 8. FIGURE E RIEPILOGO
+% L'intero blocco e' saltato in modalita' batch: in campagna Monte Carlo servono
+% i dati grezzi, non 8 figure e un riepilogo per ciascuna delle 50 ripetizioni.
 % Percorso ancorato allo script: le figure finiscono in fase_4/risultati/ sia
 % lanciando il file dall'IDE sia dalla radice del progetto.
+if ~MODO_BATCH
 cartella_fase   = fileparts(mfilename('fullpath'));
 cartella_output = fullfile(cartella_fase, 'risultati');
 if ~exist(cartella_output, 'dir'), mkdir(cartella_output); end
@@ -1252,6 +1262,8 @@ if n_round > 0
 end
 
 fprintf('Figure salvate in %s\n', cartella_output);
+
+end     % fine del blocco figure e riepilogo (saltato se MODO_BATCH)
 
 %% FUNZIONI LOCALI EKF
 
